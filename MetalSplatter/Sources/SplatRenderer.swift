@@ -459,7 +459,11 @@ public final class SplatRenderer: @unchecked Sendable {
         let pipelineDescriptor = MTLRenderPipelineDescriptor()
 
         pipelineDescriptor.label = "SingleStagePipeline"
+#if targetEnvironment(simulator)
+        pipelineDescriptor.vertexFunction = library.makeRequiredFunction(name: "singleStageSplatVertexShaderSimulator")
+#else
         pipelineDescriptor.vertexFunction = library.makeRequiredFunction(name: "singleStageSplatVertexShader")
+#endif
         pipelineDescriptor.fragmentFunction = library.makeRequiredFunction(name: "singleStageSplatFragmentShader")
 
         pipelineDescriptor.rasterSampleCount = sampleCount
@@ -510,7 +514,11 @@ public final class SplatRenderer: @unchecked Sendable {
         let pipelineDescriptor = MTLRenderPipelineDescriptor()
 
         pipelineDescriptor.label = "DrawSplatPipeline"
+#if targetEnvironment(simulator)
+        pipelineDescriptor.vertexFunction = library.makeRequiredFunction(name: "multiStageSplatVertexShaderSimulator")
+#else
         pipelineDescriptor.vertexFunction = library.makeRequiredFunction(name: "multiStageSplatVertexShader")
+#endif
         pipelineDescriptor.fragmentFunction = library.makeRequiredFunction(name: "multiStageSplatFragmentShader")
 
         pipelineDescriptor.rasterSampleCount = sampleCount
@@ -783,6 +791,19 @@ public final class SplatRenderer: @unchecked Sendable {
 
         guard !enabledChunks.isEmpty else { return false }
 
+#if targetEnvironment(simulator)
+        // Simulator fallback: the shader path binds splat buffers directly, and does not support
+        // chunk tables that embed GPU addresses (nested pointer chains are rejected by the simulator).
+        guard enabledChunks.count == 1 else {
+            Self.log.error("Simulator fallback supports exactly 1 enabled chunk (found \(enabledChunks.count)).")
+            return false
+        }
+        guard enabledChunks[0].entry.chunk.shDegree == .sh0 else {
+            Self.log.error("Simulator fallback only supports SH0 splats (found SH degree \(enabledChunks[0].entry.chunk.shDegree.rawValue)).")
+            return false
+        }
+#endif
+
         // Compute camera pose for sorting
         let cameraPose = Self.cameraWorldPose(forViewports: viewports)
         sorter.updateCameraPose(position: cameraPose.position, forward: cameraPose.forward)
@@ -808,6 +829,7 @@ public final class SplatRenderer: @unchecked Sendable {
         switchToNextDynamicBuffer()
         updateUniforms(forViewports: viewports, splatCount: UInt32(splatCount), indexedSplatCount: UInt32(indexedSplatCount))
 
+#if !targetEnvironment(simulator)
         // Build chunk table buffer (from pool if available)
         guard let chunkTableBuffer = buildChunkTableBuffer(enabledChunks: enabledChunks) else {
             return false
@@ -817,6 +839,7 @@ public final class SplatRenderer: @unchecked Sendable {
         commandBuffer.addCompletedHandler { [bufferPool, chunkTableBuffer] _ in
             bufferPool.release(chunkTableBuffer, tag: .chunkTable)
         }
+#endif
 
         let multiStage = useMultiStagePipeline
         if multiStage {
@@ -875,8 +898,13 @@ public final class SplatRenderer: @unchecked Sendable {
         }
 
         renderEncoder.setVertexBuffer(dynamicUniformBuffers, offset: renderState.uniformBufferOffset, index: BufferIndex.uniforms.rawValue)
-        renderEncoder.setVertexBuffer(chunkTableBuffer, offset: 0, index: BufferIndex.chunkTable.rawValue)
         renderEncoder.setVertexBuffer(splatIndexBuffer.buffer, offset: 0, index: BufferIndex.splatIndex.rawValue)
+
+#if targetEnvironment(simulator)
+        // Bind the single chunk's splat buffer directly where the simulator vertex shaders expect it.
+        renderEncoder.setVertexBuffer(enabledChunks[0].entry.chunk.splats.buffer, offset: 0, index: BufferIndex.chunkTable.rawValue)
+#else
+        renderEncoder.setVertexBuffer(chunkTableBuffer, offset: 0, index: BufferIndex.chunkTable.rawValue)
 
         // Make splat and SH coefficient buffers resident - required when accessing via GPU addresses embedded in chunk table
         for (entry, _) in enabledChunks {
@@ -886,6 +914,7 @@ public final class SplatRenderer: @unchecked Sendable {
                 renderEncoder.useResource(shBuffer, usage: .read, stages: .vertex)
             }
         }
+#endif
 
         renderEncoder.drawIndexedPrimitives(type: .triangle,
                                             indexCount: triangleVertexCount,

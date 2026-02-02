@@ -32,6 +32,31 @@ vertex FragmentIn singleStageSplatVertexShader(uint vertexID [[vertex_id]],
                        idx.splatIndex);
 }
 
+// Simulator fallback: avoid nested pointers stored inside buffers (chunk table -> chunk info -> splats).
+// Instead, bind the splat buffer directly at BufferIndexChunkTable and keep using the sorted index array.
+vertex FragmentIn singleStageSplatVertexShaderSimulator(uint vertexID [[vertex_id]],
+                                                        uint instanceID [[instance_id]],
+                                                        ushort amplificationID [[amplification_id]],
+                                                        device const Splat* splats [[ buffer(BufferIndexChunkTable) ]],
+                                                        constant ChunkedSplatIndex* splatIndexArray [[ buffer(BufferIndexSplatIndex) ]],
+                                                        constant UniformsArray & uniformsArray [[ buffer(BufferIndexUniforms) ]]) {
+    Uniforms uniforms = uniformsArray.uniforms[min(int(amplificationID), kMaxViewCount)];
+
+    uint splatID = instanceID * uniforms.indexedSplatCount + (vertexID / 4);
+    if (splatID >= uniforms.splatCount) {
+        FragmentIn out;
+        out.position = float4(1, 1, 0, 1);
+        return out;
+    }
+
+    ChunkedSplatIndex idx = splatIndexArray[splatID];
+    Splat splat = splats[idx.splatIndex];
+
+    return splatVertex(splat, uniforms, vertexID % 4,
+                       /*shCoefficients*/ nullptr, /*shDegree*/ SHDegree0,
+                       idx.splatIndex);
+}
+
 fragment half4 singleStageSplatFragmentShader(FragmentIn in [[stage_in]]) {
     half alpha = splatFragmentAlpha(in.relativePosition, in.color.a);
     return half4(alpha * in.color.rgb, alpha);

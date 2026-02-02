@@ -45,13 +45,12 @@ public class SplatPLYSceneReader: SplatSceneReader {
         return AsyncThrowingStream { continuation in
             Task {
                 var points = [SplatPoint]()
+                var didReadExpectedElementSeries = false
 
                 for try await plyStreamElementSeries in plyStream {
                     var pointCount = 0
-                    guard plyStreamElementSeries.typeIndex == elementMapping.elementTypeIndex else {
-                        continuation.finish(throwing: Error.unsupportedFileContents("Expected type index \(elementMapping.elementTypeIndex), found \(plyStreamElementSeries.typeIndex)"))
-                        return
-                    }
+                    guard plyStreamElementSeries.typeIndex == elementMapping.elementTypeIndex else { continue }
+                    didReadExpectedElementSeries = true
 
                     do {
                         for element in plyStreamElementSeries.elements {
@@ -73,7 +72,12 @@ public class SplatPLYSceneReader: SplatSceneReader {
 
                     continuation.yield(Array(points.prefix(pointCount)))
                 }
-                
+
+                guard didReadExpectedElementSeries else {
+                    continuation.finish(throwing: Error.unsupportedFileContents("No element series found for type index \(elementMapping.elementTypeIndex)"))
+                    return
+                }
+
                 // TODO SCIER: validate expected point count
                 continuation.finish()
             }

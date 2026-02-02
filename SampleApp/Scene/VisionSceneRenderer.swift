@@ -133,6 +133,39 @@ final class VisionSceneRenderer: @unchecked Sendable {
         rotation += Constants.rotationPerSecond * now.timeIntervalSince(lastRotationUpdateTimestamp)
     }
 
+    private func encodeClear(drawable: LayerRenderer.Drawable, commandBuffer: MTLCommandBuffer) {
+        let passDescriptor = MTLRenderPassDescriptor()
+
+        guard let colorAttachment = passDescriptor.colorAttachments[0] else {
+            Self.log.error("Missing render pass color attachment 0")
+            return
+        }
+        colorAttachment.texture = drawable.colorTextures[0]
+        colorAttachment.loadAction = .clear
+        colorAttachment.storeAction = .store
+        colorAttachment.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+
+        if let depthTexture = drawable.depthTextures.first {
+            passDescriptor.depthAttachment.texture = depthTexture
+            passDescriptor.depthAttachment.loadAction = .clear
+            passDescriptor.depthAttachment.storeAction = .dontCare
+            passDescriptor.depthAttachment.clearDepth = 1.0
+        }
+
+        if let rasterizationRateMap = drawable.rasterizationRateMaps.first {
+            passDescriptor.rasterizationRateMap = rasterizationRateMap
+        }
+
+        passDescriptor.renderTargetArrayLength =
+            layerRenderer.configuration.layout == .layered ? drawable.views.count : 1
+
+        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: passDescriptor) else {
+            Self.log.error("Failed to create clear render command encoder")
+            return
+        }
+        encoder.endEncoding()
+    }
+
     func renderFrame() {
         guard let frame = layerRenderer.queryNextFrame() else { return }
 
@@ -187,10 +220,12 @@ final class VisionSceneRenderer: @unchecked Sendable {
                 didRender = false
             }
 
-            // Only present if rendering occurred; otherwise drop the frame
-            if didRender {
-                drawable.encodePresent(commandBuffer: commandBuffer)
+            // CompositorServices requires presenting each drawable before ending submission.
+            // If we didn't render anything (e.g. model failed to load), clear and still present.
+            if !didRender {
+                encodeClear(drawable: drawable, commandBuffer: commandBuffer)
             }
+            drawable.encodePresent(commandBuffer: commandBuffer)
 
             commandBuffer.commit()
         }
@@ -234,4 +269,3 @@ final class RendererTaskExecutor: TaskExecutor {
 }
 
 #endif // os(visionOS)
-

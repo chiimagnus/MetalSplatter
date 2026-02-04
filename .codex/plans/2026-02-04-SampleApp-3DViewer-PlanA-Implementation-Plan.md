@@ -245,24 +245,6 @@
 
 ---
 
-## P5：全量回归验证
-
-### Task 13：SwiftPM 单测回归
-
-**Verify:**
-- Run: `swift test`
-- Expected: `PASS`
-
-### Task 14：三端 Release 构建回归
-
-**Verify:**
-- Run: `xcodebuild -project SampleApp/MetalSplatter_SampleApp.xcodeproj -scheme "MetalSplatter SampleApp" -configuration Release -destination "generic/platform=iOS" build`
-- Run: `xcodebuild -project SampleApp/MetalSplatter_SampleApp.xcodeproj -scheme "MetalSplatter SampleApp" -configuration Release -destination "platform=macOS" build`
-- Run: `xcodebuild -project SampleApp/MetalSplatter_SampleApp.xcodeproj -scheme "MetalSplatter SampleApp" -configuration Release -destination "generic/platform=visionOS" build`
-- Expected: 全部 `BUILD SUCCEEDED`
-
----
-
 # Plan B（后续阶段：真 3D Entity，可抓取模型本体）
 
 > 目标：把用户导入的 splat（`.ply/.splat/.spz`）“模型本体”变成 RealityKit 世界中的可命中/可抓取对象，而不是通过 Metal 渲染结果进行交互代理。

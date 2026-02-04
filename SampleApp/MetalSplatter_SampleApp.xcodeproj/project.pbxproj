@@ -17,6 +17,7 @@
 			61791DE42B4154FB00302B57 /* SampleBoxRenderer+ModelRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61791DDC2B4154FB00302B57 /* SampleBoxRenderer+ModelRenderer.swift */; };
 			61791DE82B4154FB00302B57 /* ModelRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61791DDE2B4154FB00302B57 /* ModelRenderer.swift */; };
 			61B7F1D32C0F123400C0FFEE /* ViewerInteractionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61B7F1D22C0F123400C0FFEE /* ViewerInteractionStore.swift */; };
+			61B7F1D52C0F124000C0FFEE /* ModelViewerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61B7F1D42C0F124000C0FFEE /* ModelViewerView.swift */; };
 			61791DEA2B4154FB00302B57 /* MatrixMathUtil.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61791DDF2B4154FB00302B57 /* MatrixMathUtil.swift */; };
 			61791E002B415D3F00302B57 /* MetalSplatter in Frameworks */ = {isa = PBXBuildFile; productRef = 61791DFF2B415D3F00302B57 /* MetalSplatter */; };
 			61791E022B415D3F00302B57 /* SampleBoxRenderer in Frameworks */ = {isa = PBXBuildFile; productRef = 61791E012B415D3F00302B57 /* SampleBoxRenderer */; };
@@ -35,6 +36,7 @@
 			61791DDC2B4154FB00302B57 /* SampleBoxRenderer+ModelRenderer.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = "SampleBoxRenderer+ModelRenderer.swift"; sourceTree = "<group>"; };
 			61791DDE2B4154FB00302B57 /* ModelRenderer.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ModelRenderer.swift; sourceTree = "<group>"; };
 			61B7F1D22C0F123400C0FFEE /* ViewerInteractionStore.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ViewerInteractionStore.swift; sourceTree = "<group>"; };
+			61B7F1D42C0F124000C0FFEE /* ModelViewerView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ModelViewerView.swift; sourceTree = "<group>"; };
 			61791DDF2B4154FB00302B57 /* MatrixMathUtil.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = MatrixMathUtil.swift; sourceTree = "<group>"; };
 			61791DF62B41551F00302B57 /* SampleApp.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SampleApp.swift; sourceTree = "<group>"; };
 			61791DF72B41551F00302B57 /* ContentView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -73,16 +75,17 @@
 				path = Model;
 			sourceTree = "<group>";
 		};
-		610347E02B468A0000693CE3 /* Scene */ = {
-			isa = PBXGroup;
-			children = (
-				610347D82B46861E00693CE3 /* ContentStageConfiguration.swift */,
-				61791DF72B41551F00302B57 /* ContentView.swift */,
-				61791E0E2B41685800302B57 /* MetalKitSceneRenderer.swift */,
-				61791E142B42294700302B57 /* MetalKitSceneView.swift */,
-				61791E0C2B41683500302B57 /* VisionSceneRenderer.swift */,
-			);
-			path = Scene;
+			610347E02B468A0000693CE3 /* Scene */ = {
+				isa = PBXGroup;
+				children = (
+					610347D82B46861E00693CE3 /* ContentStageConfiguration.swift */,
+					61791DF72B41551F00302B57 /* ContentView.swift */,
+					61B7F1D42C0F124000C0FFEE /* ModelViewerView.swift */,
+					61791E0E2B41685800302B57 /* MetalKitSceneRenderer.swift */,
+					61791E142B42294700302B57 /* MetalKitSceneView.swift */,
+					61791E0C2B41683500302B57 /* VisionSceneRenderer.swift */,
+				);
+				path = Scene;
 			sourceTree = "<group>";
 		};
 		610347E12B468A0B00693CE3 /* Util */ = {
@@ -215,6 +218,7 @@
 					61791DEA2B4154FB00302B57 /* MatrixMathUtil.swift in Sources */,
 					610347DB2B46875700693CE3 /* VisionSceneRenderer.swift in Sources */,
 					610347D92B46864500693CE3 /* SampleApp.swift in Sources */,
+					61B7F1D52C0F124000C0FFEE /* ModelViewerView.swift in Sources */,
 					61791E102B41688000302B57 /* MetalKitSceneRenderer.swift in Sources */,
 					61791DE02B4154FB00302B57 /* SplatRenderer+ModelRenderer.swift in Sources */,
 					61791DE82B4154FB00302B57 /* ModelRenderer.swift in Sources */,

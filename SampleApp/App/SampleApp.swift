@@ -12,8 +12,7 @@ struct SampleApp: App {
 
 #if os(macOS)
         WindowGroup(for: ModelIdentifier.self) { modelIdentifier in
-            MetalKitSceneView(modelIdentifier: modelIdentifier.wrappedValue)
-                .navigationTitle(modelIdentifier.wrappedValue?.description ?? "No Model")
+            ModelViewerView(modelIdentifier: modelIdentifier.wrappedValue)
         }
 #endif // os(macOS)
 
@@ -38,4 +37,3 @@ struct SampleApp: App {
     }
 #endif // os(visionOS)
 }
-

@@ -36,13 +36,12 @@ struct ContentView: View {
 #if os(macOS) || os(visionOS)
         mainView
 #elseif os(iOS)
-        NavigationStack(path: $navigationPath) {
-            mainView
-                .navigationDestination(for: ModelIdentifier.self) { modelIdentifier in
-                    MetalKitSceneView(modelIdentifier: modelIdentifier)
-                        .navigationTitle(modelIdentifier.description)
+                NavigationStack(path: $navigationPath) {
+                    mainView
+                        .navigationDestination(for: ModelIdentifier.self) { modelIdentifier in
+                    ModelViewerView(modelIdentifier: modelIdentifier)
+                        }
                 }
-        }
 #endif // os(iOS)
     }
 

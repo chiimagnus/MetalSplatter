@@ -4,6 +4,7 @@ import SwiftUI
 import MetalKit
 
 #if os(macOS)
+import AppKit
 private typealias ViewRepresentable = NSViewRepresentable
 #elseif os(iOS)
 private typealias ViewRepresentable = UIViewRepresentable
@@ -12,6 +13,17 @@ private typealias ViewRepresentable = UIViewRepresentable
 struct MetalKitSceneView: ViewRepresentable {
     var modelIdentifier: ModelIdentifier?
     var interactionStore: ViewerInteractionStore? = nil
+
+#if os(macOS)
+    private final class InteractionMTKView: MTKView {
+        var onScrollWheel: ((CGFloat) -> Void)?
+
+        override func scrollWheel(with event: NSEvent) {
+            onScrollWheel?(event.scrollingDeltaY)
+            super.scrollWheel(with: event)
+        }
+    }
+#endif
 
     class Coordinator {
         var renderer: MetalKitSceneRenderer?
@@ -32,7 +44,18 @@ struct MetalKitSceneView: ViewRepresentable {
 #endif
 
     private func makeView(_ coordinator: Coordinator) -> MTKView {
-        let metalKitView = MTKView()
+        let metalKitView: MTKView
+#if os(macOS)
+        let view = InteractionMTKView()
+        view.onScrollWheel = { deltaY in
+            guard let interactionStore else { return }
+            let factor = exp(-Float(deltaY) * 0.01)
+            interactionStore.applyScale(factor: factor)
+        }
+        metalKitView = view
+#else
+        metalKitView = MTKView()
+#endif
 
         if let metalDevice = MTLCreateSystemDefaultDevice() {
             metalKitView.device = metalDevice

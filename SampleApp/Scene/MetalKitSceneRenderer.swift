@@ -23,13 +23,16 @@ class MetalKitSceneRenderer: NSObject, MTKViewDelegate {
 
     let inFlightSemaphore = DispatchSemaphore(value: Constants.maxSimultaneousRenders)
 
+    private let interactionStore: ViewerInteractionStore?
+
     var drawableSize: CGSize = .zero
 
-    init?(_ metalKitView: MTKView) {
+    init?(_ metalKitView: MTKView, interactionStore: ViewerInteractionStore? = nil) {
         self.device = metalKitView.device!
         guard let queue = self.device.makeCommandQueue() else { return nil }
         self.commandQueue = queue
         self.metalKitView = metalKitView
+        self.interactionStore = interactionStore
         metalKitView.colorPixelFormat = MTLPixelFormat.bgra8Unorm_srgb
         metalKitView.depthStencilPixelFormat = MTLPixelFormat.depth32Float
         metalKitView.sampleCount = 1
@@ -69,6 +72,9 @@ class MetalKitSceneRenderer: NSObject, MTKViewDelegate {
                                                              nearZ: 0.1,
                                                              farZ: 100.0)
 
+        let snapshot = interactionStore?.snapshot() ?? .identity
+        let rotationMatrix = simd_float4x4(snapshot.orientation)
+        let scaleMatrix = simd_float4x4(diagonal: SIMD4<Float>(snapshot.scale, snapshot.scale, snapshot.scale, 1))
         let translationMatrix = matrix4x4_translation(0.0, 0.0, Constants.modelCenterZ)
         // Turn common 3D GS PLY files rightside-up. This isn't generally meaningful, it just
         // happens to be a useful default for the most common datasets at the moment.
@@ -78,7 +84,7 @@ class MetalKitSceneRenderer: NSObject, MTKViewDelegate {
 
         return ModelRendererViewportDescriptor(viewport: viewport,
                                                projectionMatrix: projectionMatrix,
-                                               viewMatrix: translationMatrix * commonUpCalibration,
+                                               viewMatrix: translationMatrix * rotationMatrix * commonUpCalibration * scaleMatrix,
                                                screenSize: SIMD2(x: Int(drawableSize.width), y: Int(drawableSize.height)))
     }
 

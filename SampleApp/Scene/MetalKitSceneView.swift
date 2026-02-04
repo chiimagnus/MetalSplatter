@@ -11,6 +11,7 @@ private typealias ViewRepresentable = UIViewRepresentable
 
 struct MetalKitSceneView: ViewRepresentable {
     var modelIdentifier: ModelIdentifier?
+    var interactionStore: ViewerInteractionStore? = nil
 
     class Coordinator {
         var renderer: MetalKitSceneRenderer?
@@ -37,7 +38,7 @@ struct MetalKitSceneView: ViewRepresentable {
             metalKitView.device = metalDevice
         }
 
-        let renderer = MetalKitSceneRenderer(metalKitView)
+        let renderer = MetalKitSceneRenderer(metalKitView, interactionStore: interactionStore)
         coordinator.renderer = renderer
         metalKitView.delegate = renderer
 

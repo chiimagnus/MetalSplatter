@@ -178,7 +178,7 @@
 
 ---
 
-## P3：visionOS Volumetric Window（A 路线：Metal 渲染 + 旋转/缩放）
+## ❌P3：visionOS Volumetric Window（A 路线：Metal 渲染 + 旋转/缩放）
 
 ### Task 9：新增 Volumetric WindowGroup（仅 visionOS）
 

@@ -1,4 +1,4 @@
-#if os(iOS) || os(macOS) || os(visionOS)
+#if os(iOS) || os(macOS)
 
 import SwiftUI
 
@@ -52,4 +52,5 @@ struct ModelViewerView: View {
     }
 }
 
-#endif // os(iOS) || os(macOS) || os(visionOS)
+#endif // os(iOS) || os(macOS)
+

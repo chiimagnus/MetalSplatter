@@ -17,12 +17,6 @@ struct SampleApp: App {
 #endif // os(macOS)
 
 #if os(visionOS)
-        WindowGroup(id: "volumetricViewer", for: ModelIdentifier.self) { modelIdentifier in
-            ModelViewerView(modelIdentifier: modelIdentifier.wrappedValue)
-        }
-        .windowStyle(.volumetric)
-        .defaultSize(width: 0.8, height: 0.6, depth: 0.6, in: .meters)
-
         ImmersiveSpace(for: ModelIdentifier.self) { modelIdentifier in
             CompositorLayer(configuration: ContentStageConfiguration()) { layerRenderer in
                 let modelToLoad = modelIdentifier.wrappedValue

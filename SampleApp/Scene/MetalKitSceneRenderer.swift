@@ -1,4 +1,4 @@
-#if os(iOS) || os(macOS) || os(visionOS)
+#if os(iOS) || os(macOS)
 
 import Metal
 import MetalKit
@@ -131,4 +131,4 @@ class MetalKitSceneRenderer: NSObject, MTKViewDelegate {
     }
 }
 
-#endif // os(iOS) || os(macOS) || os(visionOS)
+#endif // os(iOS) || os(macOS)

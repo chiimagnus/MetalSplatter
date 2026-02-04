@@ -1,4 +1,4 @@
-#if os(iOS) || os(macOS) || os(visionOS)
+#if os(iOS) || os(macOS)
 
 import SwiftUI
 import MetalKit
@@ -6,7 +6,7 @@ import MetalKit
 #if os(macOS)
 import AppKit
 private typealias ViewRepresentable = NSViewRepresentable
-#elseif os(iOS) || os(visionOS)
+#elseif os(iOS)
 private typealias ViewRepresentable = UIViewRepresentable
 #endif
 
@@ -37,7 +37,7 @@ struct MetalKitSceneView: ViewRepresentable {
     func makeNSView(context: NSViewRepresentableContext<MetalKitSceneView>) -> MTKView {
         makeView(context.coordinator)
     }
-#elseif os(iOS) || os(visionOS)
+#elseif os(iOS)
     func makeUIView(context: UIViewRepresentableContext<MetalKitSceneView>) -> MTKView {
         makeView(context.coordinator)
     }
@@ -80,7 +80,7 @@ struct MetalKitSceneView: ViewRepresentable {
     func updateNSView(_ view: MTKView, context: NSViewRepresentableContext<MetalKitSceneView>) {
         updateView(context.coordinator)
     }
-#elseif os(iOS) || os(visionOS)
+#elseif os(iOS)
     func updateUIView(_ view: MTKView, context: UIViewRepresentableContext<MetalKitSceneView>) {
         updateView(context.coordinator)
     }
@@ -98,4 +98,4 @@ struct MetalKitSceneView: ViewRepresentable {
     }
 }
 
-#endif // os(iOS) || os(macOS) || os(visionOS)
+#endif // os(iOS) || os(macOS)

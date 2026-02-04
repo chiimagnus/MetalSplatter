@@ -13,22 +13,14 @@ struct ContentView: View {
         navigationPath.append(value)
     }
 #elseif os(visionOS)
-    @Environment(\.openWindow) private var openWindow
     @Environment(\.openImmersiveSpace) var openImmersiveSpace
     @Environment(\.dismissImmersiveSpace) var dismissImmersiveSpace
 
     @State var immersiveSpaceIsShown = false
-    @State private var selectedModelForImmersive: ModelIdentifier? = nil
 
-    private func openVolumetricWindow(value: ModelIdentifier) {
-        selectedModelForImmersive = value
-        openWindow(id: "volumetricViewer", value: value)
-    }
-
-    private func openImmersiveIfPossible() {
-        guard let selectedModelForImmersive else { return }
+    private func openWindow(value: ModelIdentifier) {
         Task {
-            switch await openImmersiveSpace(value: selectedModelForImmersive) {
+            switch await openImmersiveSpace(value: value) {
             case .opened:
                 immersiveSpaceIsShown = true
             case .error, .userCancelled:
@@ -68,6 +60,9 @@ struct ContentView: View {
             .padding()
             .buttonStyle(.borderedProminent)
             .disabled(isPickingFile)
+#if os(visionOS)
+            .disabled(immersiveSpaceIsShown)
+#endif
             .fileImporter(isPresented: $isPickingFile,
                           allowedContentTypes: [
                             UTType(filenameExtension: "ply")!,
@@ -83,11 +78,7 @@ struct ContentView: View {
                         try await Task.sleep(for: .seconds(10))
                         url.stopAccessingSecurityScopedResource()
                     }
-                    #if os(visionOS)
-                    openVolumetricWindow(value: ModelIdentifier.gaussianSplat(url))
-                    #else
                     openWindow(value: ModelIdentifier.gaussianSplat(url))
-                    #endif
                 case .failure:
                     break
                 }
@@ -96,25 +87,17 @@ struct ContentView: View {
             Spacer()
 
             Button("Show Sample Box") {
-                #if os(visionOS)
-                openVolumetricWindow(value: ModelIdentifier.sampleBox)
-                #else
                 openWindow(value: ModelIdentifier.sampleBox)
-                #endif
             }
             .padding()
             .buttonStyle(.borderedProminent)
+#if os(visionOS)
+            .disabled(immersiveSpaceIsShown)
+#endif
 
             Spacer()
 
 #if os(visionOS)
-            Button("Enter Immersive Space") {
-                openImmersiveIfPossible()
-            }
-            .disabled(immersiveSpaceIsShown || selectedModelForImmersive == nil)
-
-            Spacer()
-
             Button("Dismiss Immersive Space") {
                 Task {
                     await dismissImmersiveSpace()

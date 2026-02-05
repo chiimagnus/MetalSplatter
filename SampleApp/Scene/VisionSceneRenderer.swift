@@ -50,6 +50,12 @@ final class VisionSceneRenderer: @unchecked Sendable {
 
     private var lastDeviceOriginFromAnchorTransform = matrix_identity_float4x4
 
+#if targetEnvironment(simulator)
+    private let supportsWorldAnchors = false
+#else
+    private let supportsWorldAnchors = true
+#endif
+
     init(_ layerRenderer: LayerRenderer) {
         self.layerRenderer = layerRenderer
         self.device = layerRenderer.device
@@ -141,7 +147,7 @@ final class VisionSceneRenderer: @unchecked Sendable {
                 fatalError("Failed to initialize ARSession")
             }
 
-            self.renderLoop()
+            await self.renderLoop()
         }
     }
 
@@ -149,13 +155,23 @@ final class VisionSceneRenderer: @unchecked Sendable {
         let defaultPlacementMatrix = matrix4x4_translation(0.0, 0.0, Constants.modelCenterZ)
         let calibrationMatrix = modelCalibrationTransform
 
-        let placementMatrix = modelOriginFromAnchorTransform ?? defaultPlacementMatrix
-
         return drawable.views.enumerated().map { (index, view) in
-            let userViewpointMatrix = (deviceOriginFromAnchorTransform * view.transform).inverse
+            let originFromView = deviceOriginFromAnchorTransform * view.transform
+            let userViewpointMatrix = originFromView.inverse
             let projectionMatrix = drawable.computeProjection(viewIndex: index)
             let screenSize = SIMD2(x: Int(view.textureMap.viewport.width),
                                    y: Int(view.textureMap.viewport.height))
+            let placementMatrix: simd_float4x4
+            if let modelOriginFromAnchorTransform {
+                placementMatrix = modelOriginFromAnchorTransform
+            } else {
+                // Fallback path (including Simulator, where WorldAnchor isn't supported):
+                // keep the model stable relative to the viewer until we can world-lock it.
+                placementMatrix =
+                    preferOriginAtUserViewpoint
+                    ? originFromView
+                    : (originFromView * matrix4x4_translation(0, 0, -fixedPlacementDistanceMeters))
+            }
             return ModelRendererViewportDescriptor(viewport: view.textureMap.viewport,
                                                    projectionMatrix: projectionMatrix,
                                                    viewMatrix: userViewpointMatrix * placementMatrix * calibrationMatrix,
@@ -274,8 +290,8 @@ final class VisionSceneRenderer: @unchecked Sendable {
         frame.endSubmission()
     }
 
-    func renderLoop() {
-        while true {
+    func renderLoop() async {
+        while !Task.isCancelled {
             autoreleasepool {
                 if layerRenderer.state == .invalidated {
                     Self.log.warning("Layer is invalidated")
@@ -290,6 +306,8 @@ final class VisionSceneRenderer: @unchecked Sendable {
             if layerRenderer.state == .invalidated {
                 return
             }
+
+            await Task.yield()
         }
     }
 
@@ -305,27 +323,32 @@ final class VisionSceneRenderer: @unchecked Sendable {
     }
 
     private func ensureModelWorldAnchorPlacedIfNeeded(deviceAnchor: DeviceAnchor, viewTransform: simd_float4x4) {
+        guard supportsWorldAnchors else { return }
         guard modelOriginFromAnchorTransform == nil else { return }
         guard modelRenderer != nil else { return }
         guard anchorPlacementTask == nil else { return }
+        guard modelWorldAnchorID == nil else { return }
 
         let originFromView = deviceAnchor.originFromAnchorTransform * viewTransform
-        let originFromModel: simd_float4x4
-        if preferOriginAtUserViewpoint {
-            originFromModel = originFromView
-        } else {
-            originFromModel = originFromView * matrix4x4_translation(0, 0, -fixedPlacementDistanceMeters)
-        }
-        modelOriginFromAnchorTransform = originFromModel
+        let originFromModel =
+            preferOriginAtUserViewpoint
+            ? originFromView
+            : (originFromView * matrix4x4_translation(0, 0, -fixedPlacementDistanceMeters))
 
         anchorPlacementTask = Task(executorPreference: RendererTaskExecutor.shared) { [weak self] in
             guard let self else { return }
+            defer { anchorPlacementTask = nil }
             do {
                 let anchor = WorldAnchor(originFromAnchorTransform: originFromModel)
                 modelWorldAnchorID = anchor.id
                 try await worldTracking.addAnchor(anchor)
+                modelOriginFromAnchorTransform = originFromModel
                 startListeningForAnchorUpdates(anchorID: anchor.id)
-                Self.log.info("Placed WorldAnchor for model at 1.5m in front of the user (id: \(anchor.id))")
+                let placementDescription =
+                    preferOriginAtUserViewpoint
+                    ? "at user viewpoint (dataset camera origin)"
+                    : "\(fixedPlacementDistanceMeters)m in front of the user"
+                Self.log.info("Placed WorldAnchor for model \(placementDescription) (id: \(anchor.id))")
             } catch {
                 Self.log.error("Failed to add WorldAnchor; falling back to fixed transform. Error: \(error.localizedDescription)")
             }
@@ -337,6 +360,7 @@ final class VisionSceneRenderer: @unchecked Sendable {
 
         anchorUpdatesTask = Task(executorPreference: RendererTaskExecutor.shared) { [weak self] in
             guard let self else { return }
+            defer { anchorUpdatesTask = nil }
             do {
                 for await update in worldTracking.anchorUpdates {
                     if Task.isCancelled { break }
@@ -346,6 +370,8 @@ final class VisionSceneRenderer: @unchecked Sendable {
                         modelOriginFromAnchorTransform = update.anchor.originFromAnchorTransform
                     case .removed:
                         Self.log.warning("WorldAnchor was removed (id: \(anchorID))")
+                        modelWorldAnchorID = nil
+                        modelOriginFromAnchorTransform = nil
                     @unknown default:
                         break
                     }

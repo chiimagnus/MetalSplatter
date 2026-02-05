@@ -37,6 +37,16 @@ final class VisionSceneRenderer: @unchecked Sendable {
     let arSession: ARKitSession
     let worldTracking: WorldTrackingProvider
 
+    private let modelWorldLockDistanceMeters: Float = 1.5
+
+    private var modelWorldAnchorID: UUID?
+    private var modelOriginFromAnchorTransform: simd_float4x4?
+
+    private var anchorUpdatesTask: Task<Void, Never>?
+    private var anchorPlacementTask: Task<Void, Never>?
+
+    private var lastDeviceOriginFromAnchorTransform = matrix_identity_float4x4
+
     init(_ layerRenderer: LayerRenderer) {
         self.layerRenderer = layerRenderer
         self.device = layerRenderer.device
@@ -44,6 +54,11 @@ final class VisionSceneRenderer: @unchecked Sendable {
 
         worldTracking = WorldTrackingProvider()
         arSession = ARKitSession()
+    }
+
+    deinit {
+        anchorUpdatesTask?.cancel()
+        anchorPlacementTask?.cancel()
     }
 
     /// Static entry point for starting the renderer.
@@ -62,6 +77,8 @@ final class VisionSceneRenderer: @unchecked Sendable {
     func load(_ model: ModelIdentifier?) async throws {
         guard model != self.model else { return }
         self.model = model
+
+        resetWorldAnchorPlacement()
 
         modelRenderer = nil
         switch model {
@@ -98,22 +115,22 @@ final class VisionSceneRenderer: @unchecked Sendable {
         }
     }
 
-    private func viewports(drawable: LayerRenderer.Drawable, deviceAnchor: DeviceAnchor?) -> [ModelRendererViewportDescriptor] {
-        let translationMatrix = matrix4x4_translation(0.0, 0.0, Constants.modelCenterZ)
+    private func viewports(drawable: LayerRenderer.Drawable, deviceOriginFromAnchorTransform: simd_float4x4) -> [ModelRendererViewportDescriptor] {
+        let defaultPlacementMatrix = matrix4x4_translation(0.0, 0.0, Constants.modelCenterZ)
         // Turn common 3D GS PLY files rightside-up. This isn't generally meaningful, it just
         // happens to be a useful default for the most common datasets at the moment.
         let commonUpCalibration = matrix4x4_rotation(radians: .pi, axis: SIMD3<Float>(0, 0, 1))
 
-        let simdDeviceAnchor = deviceAnchor?.originFromAnchorTransform ?? matrix_identity_float4x4
+        let placementMatrix = modelOriginFromAnchorTransform ?? defaultPlacementMatrix
 
         return drawable.views.enumerated().map { (index, view) in
-            let userViewpointMatrix = (simdDeviceAnchor * view.transform).inverse
+            let userViewpointMatrix = (deviceOriginFromAnchorTransform * view.transform).inverse
             let projectionMatrix = drawable.computeProjection(viewIndex: index)
             let screenSize = SIMD2(x: Int(view.textureMap.viewport.width),
                                    y: Int(view.textureMap.viewport.height))
             return ModelRendererViewportDescriptor(viewport: view.textureMap.viewport,
                                                    projectionMatrix: projectionMatrix,
-                                                   viewMatrix: userViewpointMatrix * translationMatrix * commonUpCalibration,
+                                                   viewMatrix: userViewpointMatrix * placementMatrix * commonUpCalibration,
                                                    screenSize: screenSize)
         }
     }
@@ -171,6 +188,10 @@ final class VisionSceneRenderer: @unchecked Sendable {
         let primaryDrawable = drawables[0]
         let time = LayerRenderer.Clock.Instant.epoch.duration(to: primaryDrawable.frameTiming.presentationTime).timeInterval
         let deviceAnchor = worldTracking.queryDeviceAnchor(atTimestamp: time)
+        if let deviceAnchor {
+            lastDeviceOriginFromAnchorTransform = deviceAnchor.originFromAnchorTransform
+            ensureModelWorldAnchorPlacedIfNeeded(deviceAnchor: deviceAnchor)
+        }
 
         for (index, drawable) in drawables.enumerated() {
             guard let commandBuffer = commandQueue.makeCommandBuffer() else {
@@ -187,7 +208,8 @@ final class VisionSceneRenderer: @unchecked Sendable {
                 }
             }
 
-            let viewports = self.viewports(drawable: drawable, deviceAnchor: deviceAnchor)
+            let viewports = self.viewports(drawable: drawable,
+                                           deviceOriginFromAnchorTransform: lastDeviceOriginFromAnchorTransform)
 
             let didRender: Bool
             do {
@@ -231,6 +253,62 @@ final class VisionSceneRenderer: @unchecked Sendable {
             }
             if layerRenderer.state == .invalidated {
                 return
+            }
+        }
+    }
+
+    private func resetWorldAnchorPlacement() {
+        modelWorldAnchorID = nil
+        modelOriginFromAnchorTransform = nil
+
+        anchorUpdatesTask?.cancel()
+        anchorUpdatesTask = nil
+
+        anchorPlacementTask?.cancel()
+        anchorPlacementTask = nil
+    }
+
+    private func ensureModelWorldAnchorPlacedIfNeeded(deviceAnchor: DeviceAnchor) {
+        guard modelOriginFromAnchorTransform == nil else { return }
+        guard modelRenderer != nil else { return }
+        guard anchorPlacementTask == nil else { return }
+
+        let originFromModel =
+            deviceAnchor.originFromAnchorTransform * matrix4x4_translation(0, 0, -modelWorldLockDistanceMeters)
+        modelOriginFromAnchorTransform = originFromModel
+
+        anchorPlacementTask = Task(executorPreference: RendererTaskExecutor.shared) { [weak self] in
+            guard let self else { return }
+            do {
+                let anchor = WorldAnchor(originFromAnchorTransform: originFromModel)
+                modelWorldAnchorID = anchor.id
+                try await worldTracking.addAnchor(anchor)
+                startListeningForAnchorUpdates(anchorID: anchor.id)
+                Self.log.info("Placed WorldAnchor for model at 1.5m in front of the user (id: \(anchor.id))")
+            } catch {
+                Self.log.error("Failed to add WorldAnchor; falling back to fixed transform. Error: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func startListeningForAnchorUpdates(anchorID: UUID) {
+        guard anchorUpdatesTask == nil else { return }
+
+        anchorUpdatesTask = Task(executorPreference: RendererTaskExecutor.shared) { [weak self] in
+            guard let self else { return }
+            do {
+                for await update in worldTracking.anchorUpdates {
+                    if Task.isCancelled { break }
+                    guard update.anchor.id == anchorID else { continue }
+                    switch update.event {
+                    case .added, .updated:
+                        modelOriginFromAnchorTransform = update.anchor.originFromAnchorTransform
+                    case .removed:
+                        Self.log.warning("WorldAnchor was removed (id: \(anchorID))")
+                    @unknown default:
+                        break
+                    }
+                }
             }
         }
     }

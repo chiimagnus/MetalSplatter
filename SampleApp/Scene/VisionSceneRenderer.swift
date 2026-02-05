@@ -49,12 +49,7 @@ final class VisionSceneRenderer: @unchecked Sendable {
     private var anchorPlacementTask: Task<Void, Never>?
 
     private var lastDeviceOriginFromAnchorTransform = matrix_identity_float4x4
-
-#if targetEnvironment(simulator)
-    private let supportsWorldAnchors = false
-#else
-    private let supportsWorldAnchors = true
-#endif
+    private var didAttemptWorldAnchorPlacement = false
 
     init(_ layerRenderer: LayerRenderer) {
         self.layerRenderer = layerRenderer
@@ -161,17 +156,7 @@ final class VisionSceneRenderer: @unchecked Sendable {
             let projectionMatrix = drawable.computeProjection(viewIndex: index)
             let screenSize = SIMD2(x: Int(view.textureMap.viewport.width),
                                    y: Int(view.textureMap.viewport.height))
-            let placementMatrix: simd_float4x4
-            if let modelOriginFromAnchorTransform {
-                placementMatrix = modelOriginFromAnchorTransform
-            } else {
-                // Fallback path (including Simulator, where WorldAnchor isn't supported):
-                // keep the model stable relative to the viewer until we can world-lock it.
-                placementMatrix =
-                    preferOriginAtUserViewpoint
-                    ? originFromView
-                    : (originFromView * matrix4x4_translation(0, 0, -fixedPlacementDistanceMeters))
-            }
+            let placementMatrix = modelOriginFromAnchorTransform ?? defaultPlacementMatrix
             return ModelRendererViewportDescriptor(viewport: view.textureMap.viewport,
                                                    projectionMatrix: projectionMatrix,
                                                    viewMatrix: userViewpointMatrix * placementMatrix * calibrationMatrix,
@@ -314,6 +299,7 @@ final class VisionSceneRenderer: @unchecked Sendable {
     private func resetWorldAnchorPlacement() {
         modelWorldAnchorID = nil
         modelOriginFromAnchorTransform = nil
+        didAttemptWorldAnchorPlacement = false
 
         anchorUpdatesTask?.cancel()
         anchorUpdatesTask = nil
@@ -323,17 +309,21 @@ final class VisionSceneRenderer: @unchecked Sendable {
     }
 
     private func ensureModelWorldAnchorPlacedIfNeeded(deviceAnchor: DeviceAnchor, viewTransform: simd_float4x4) {
-        guard supportsWorldAnchors else { return }
         guard modelOriginFromAnchorTransform == nil else { return }
         guard modelRenderer != nil else { return }
         guard anchorPlacementTask == nil else { return }
         guard modelWorldAnchorID == nil else { return }
+        guard !didAttemptWorldAnchorPlacement else { return }
+        didAttemptWorldAnchorPlacement = true
 
         let originFromView = deviceAnchor.originFromAnchorTransform * viewTransform
         let originFromModel =
             preferOriginAtUserViewpoint
             ? originFromView
             : (originFromView * matrix4x4_translation(0, 0, -fixedPlacementDistanceMeters))
+        // Always cache a stable placement matrix first, so the simulator (or a failed addAnchor)
+        // doesn't degenerate into a viewer-locked object.
+        modelOriginFromAnchorTransform = originFromModel
 
         anchorPlacementTask = Task(executorPreference: RendererTaskExecutor.shared) { [weak self] in
             guard let self else { return }
@@ -342,7 +332,6 @@ final class VisionSceneRenderer: @unchecked Sendable {
                 let anchor = WorldAnchor(originFromAnchorTransform: originFromModel)
                 modelWorldAnchorID = anchor.id
                 try await worldTracking.addAnchor(anchor)
-                modelOriginFromAnchorTransform = originFromModel
                 startListeningForAnchorUpdates(anchorID: anchor.id)
                 let placementDescription =
                     preferOriginAtUserViewpoint
@@ -372,6 +361,7 @@ final class VisionSceneRenderer: @unchecked Sendable {
                         Self.log.warning("WorldAnchor was removed (id: \(anchorID))")
                         modelWorldAnchorID = nil
                         modelOriginFromAnchorTransform = nil
+                        didAttemptWorldAnchorPlacement = false
                     @unknown default:
                         break
                     }

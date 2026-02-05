@@ -37,10 +37,13 @@ final class VisionSceneRenderer: @unchecked Sendable {
     let arSession: ARKitSession
     let worldTracking: WorldTrackingProvider
 
-    private let modelWorldLockDistanceMeters: Float = 1.5
+    private let fixedPlacementDistanceMeters: Float = 1.5
 
     private var modelWorldAnchorID: UUID?
     private var modelOriginFromAnchorTransform: simd_float4x4?
+    private var modelCalibrationTransform = matrix_identity_float4x4
+    private var preferOriginAtUserViewpoint = false
+    private var axisGizmoRenderer: AxisGizmoRenderer?
 
     private var anchorUpdatesTask: Task<Void, Never>?
     private var anchorPlacementTask: Task<Void, Never>?
@@ -83,6 +86,20 @@ final class VisionSceneRenderer: @unchecked Sendable {
         modelRenderer = nil
         switch model {
         case .gaussianSplat(let url):
+            do {
+                let metadata = try SplatPLYMetadata.read(from: url)
+                preferOriginAtUserViewpoint = (metadata.forwardAxisHint == .positiveZ)
+                modelCalibrationTransform =
+                    metadata.forwardAxisHint == .positiveZ
+                    ? matrix4x4_rotation(radians: .pi, axis: SIMD3<Float>(1, 0, 0)) // OpenCV(+Z forward, +Y down) -> renderer(-Z forward, +Y up)
+                    : matrix4x4_rotation(radians: .pi, axis: SIMD3<Float>(0, 0, 1)) // legacy default
+                Self.log.info("PLY forward axis hint: \(String(describing: metadata.forwardAxisHint)), meanZ(sample): \(metadata.sampledMeanZ ?? .nan)")
+            } catch {
+                preferOriginAtUserViewpoint = false
+                modelCalibrationTransform = matrix4x4_rotation(radians: .pi, axis: SIMD3<Float>(0, 0, 1))
+                Self.log.warning("Unable to read PLY metadata; using legacy calibration. Error: \(error.localizedDescription)")
+            }
+
             let splat = try SplatRenderer(device: device,
                                           colorFormat: layerRenderer.configuration.colorFormat,
                                           depthFormat: layerRenderer.configuration.depthFormat,
@@ -101,6 +118,19 @@ final class VisionSceneRenderer: @unchecked Sendable {
         case .none:
             break
         }
+
+        if axisGizmoRenderer == nil {
+            do {
+                axisGizmoRenderer = try AxisGizmoRenderer(device: device,
+                                                          colorFormat: layerRenderer.configuration.colorFormat,
+                                                          depthFormat: layerRenderer.configuration.depthFormat,
+                                                          sampleCount: 1,
+                                                          maxViewCount: layerRenderer.configuration.layout == .layered ? layerRenderer.properties.viewCount : 1)
+            } catch {
+                Self.log.error("Unable to create AxisGizmoRenderer: \(error.localizedDescription)")
+                axisGizmoRenderer = nil
+            }
+        }
     }
 
     func startRenderLoop() {
@@ -117,9 +147,7 @@ final class VisionSceneRenderer: @unchecked Sendable {
 
     private func viewports(drawable: LayerRenderer.Drawable, deviceOriginFromAnchorTransform: simd_float4x4) -> [ModelRendererViewportDescriptor] {
         let defaultPlacementMatrix = matrix4x4_translation(0.0, 0.0, Constants.modelCenterZ)
-        // Turn common 3D GS PLY files rightside-up. This isn't generally meaningful, it just
-        // happens to be a useful default for the most common datasets at the moment.
-        let commonUpCalibration = matrix4x4_rotation(radians: .pi, axis: SIMD3<Float>(0, 0, 1))
+        let calibrationMatrix = modelCalibrationTransform
 
         let placementMatrix = modelOriginFromAnchorTransform ?? defaultPlacementMatrix
 
@@ -130,7 +158,7 @@ final class VisionSceneRenderer: @unchecked Sendable {
                                    y: Int(view.textureMap.viewport.height))
             return ModelRendererViewportDescriptor(viewport: view.textureMap.viewport,
                                                    projectionMatrix: projectionMatrix,
-                                                   viewMatrix: userViewpointMatrix * placementMatrix * commonUpCalibration,
+                                                   viewMatrix: userViewpointMatrix * placementMatrix * calibrationMatrix,
                                                    screenSize: screenSize)
         }
     }
@@ -190,7 +218,8 @@ final class VisionSceneRenderer: @unchecked Sendable {
         let deviceAnchor = worldTracking.queryDeviceAnchor(atTimestamp: time)
         if let deviceAnchor {
             lastDeviceOriginFromAnchorTransform = deviceAnchor.originFromAnchorTransform
-            ensureModelWorldAnchorPlacedIfNeeded(deviceAnchor: deviceAnchor)
+            let primaryViewTransform = primaryDrawable.views.first?.transform ?? matrix_identity_float4x4
+            ensureModelWorldAnchorPlacedIfNeeded(deviceAnchor: deviceAnchor, viewTransform: primaryViewTransform)
         }
 
         for (index, drawable) in drawables.enumerated() {
@@ -230,6 +259,13 @@ final class VisionSceneRenderer: @unchecked Sendable {
             if !didRender {
                 encodeClear(drawable: drawable, commandBuffer: commandBuffer)
             }
+
+            axisGizmoRenderer?.encode(viewports: viewports,
+                                      colorTexture: drawable.colorTextures[0],
+                                      depthTexture: drawable.depthTextures.first,
+                                      rasterizationRateMap: drawable.rasterizationRateMaps.first,
+                                      renderTargetArrayLength: layerRenderer.configuration.layout == .layered ? drawable.views.count : 1,
+                                      to: commandBuffer)
             drawable.encodePresent(commandBuffer: commandBuffer)
 
             commandBuffer.commit()
@@ -268,13 +304,18 @@ final class VisionSceneRenderer: @unchecked Sendable {
         anchorPlacementTask = nil
     }
 
-    private func ensureModelWorldAnchorPlacedIfNeeded(deviceAnchor: DeviceAnchor) {
+    private func ensureModelWorldAnchorPlacedIfNeeded(deviceAnchor: DeviceAnchor, viewTransform: simd_float4x4) {
         guard modelOriginFromAnchorTransform == nil else { return }
         guard modelRenderer != nil else { return }
         guard anchorPlacementTask == nil else { return }
 
-        let originFromModel =
-            deviceAnchor.originFromAnchorTransform * matrix4x4_translation(0, 0, -modelWorldLockDistanceMeters)
+        let originFromView = deviceAnchor.originFromAnchorTransform * viewTransform
+        let originFromModel: simd_float4x4
+        if preferOriginAtUserViewpoint {
+            originFromModel = originFromView
+        } else {
+            originFromModel = originFromView * matrix4x4_translation(0, 0, -fixedPlacementDistanceMeters)
+        }
         modelOriginFromAnchorTransform = originFromModel
 
         anchorPlacementTask = Task(executorPreference: RendererTaskExecutor.shared) { [weak self] in

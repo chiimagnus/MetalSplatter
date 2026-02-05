@@ -55,7 +55,7 @@ public struct PLYHeader: Equatable, Sendable {
             }
         }
 
-        var byteWidth: Int {
+        public var byteWidth: Int {
             switch self {
             case .int8: Int8.byteWidth
             case .uint8: UInt8.byteWidth

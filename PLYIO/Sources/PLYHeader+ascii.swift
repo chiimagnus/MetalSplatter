@@ -33,7 +33,7 @@ extension PLYHeader {
         }
     }
 
-    static func decodeASCII(from headerData: Data) throws -> PLYHeader {
+    public static func decodeASCII(from headerData: Data) throws -> PLYHeader {
         guard let headerString = String(data: headerData, encoding: .utf8) else {
             throw ASCIIDecodeError.headerInvalidCharacters
         }

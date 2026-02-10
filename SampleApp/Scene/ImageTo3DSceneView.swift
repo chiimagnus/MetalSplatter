@@ -101,6 +101,17 @@ struct ImageTo3DSceneView: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(isGenerating)
+
+                Button {
+                    Task { await generator.unloadModel() }
+                } label: {
+                    HStack {
+                        Image(systemName: "trash")
+                        Text("Unload Model")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(isGenerating)
             }
 
             if isGenerating {

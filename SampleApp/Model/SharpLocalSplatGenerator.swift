@@ -35,6 +35,10 @@ actor SharpLocalSplatGenerator {
 
     private var model: MLModel?
 
+    func unloadModel() {
+        model = nil
+    }
+
     func generate(from sourceImage: CGImage,
                   disparityFactor: Float = 1.0,
                   progress: (@Sendable (Double) -> Void)? = nil) async throws -> GenerationResult {
@@ -67,6 +71,10 @@ actor SharpLocalSplatGenerator {
 
         let tensors = try resolveOutputs(io: io, output: output)
         let pointCount = tensors.positions.pointCount
+
+        // Release the model as early as possible to reduce steady-state memory use after inference.
+        // Core ML may still retain internal caches, but this helps drop our strong reference.
+        self.model = nil
 
         let outURL = try generatedPLYURL()
             .appendingPathComponent("sharp-\(UUID().uuidString)")

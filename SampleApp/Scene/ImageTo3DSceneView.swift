@@ -1,4 +1,4 @@
-#if os(visionOS)
+#if os(iOS) || os(macOS) || os(visionOS)
 
 import PhotosUI
 import SwiftUI
@@ -25,11 +25,11 @@ struct ImageTo3DSceneView: View {
 
     private let generator = SharpLocalSplatGenerator()
 
-    private var isSimulator: Bool {
-#if targetEnvironment(simulator)
-        true
-#else
+    private var isInferenceSupported: Bool {
+#if os(visionOS) && targetEnvironment(simulator)
         false
+#else
+        true
 #endif
     }
 
@@ -64,12 +64,6 @@ struct ImageTo3DSceneView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
-            if isSimulator {
-                Text("Local SHARP inference is not supported on visionOS Simulator. Run on device to generate PLY.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-
             PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
                 HStack {
                     Image(systemName: "photo.on.rectangle")
@@ -77,7 +71,13 @@ struct ImageTo3DSceneView: View {
                 }
             }
             .buttonStyle(.bordered)
-            .disabled(!processLocally || isGenerating || isSimulator)
+            .disabled(!processLocally || isGenerating || !isInferenceSupported)
+
+            if !isInferenceSupported {
+                Text("Local SHARP inference is not supported on visionOS Simulator. Run on device to generate PLY.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
 
             if let generatedPLYURL {
                 Button {
@@ -261,4 +261,4 @@ private struct PLYFileMover: ViewModifier {
     }
 }
 
-#endif // os(visionOS)
+#endif // os(iOS) || os(macOS) || os(visionOS)

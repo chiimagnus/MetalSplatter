@@ -54,7 +54,7 @@ struct ContentView: View {
 
             Spacer()
 
-#if os(visionOS)
+#if os(iOS) || os(macOS) || os(visionOS)
             ImageTo3DSceneView { modelIdentifier in
                 openWindow(value: modelIdentifier)
             }

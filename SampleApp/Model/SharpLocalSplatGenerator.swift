@@ -122,8 +122,13 @@ actor SharpLocalSplatGenerator {
         // visionOS Simulator may not support the GPU/MPSGraph backend required by this model.
         config.computeUnits = .cpuOnly
 #else
-        // Prefer NE on device when available.
+        #if os(macOS)
+        // Match the upstream script and let Core ML pick the best backend on Mac.
+        config.computeUnits = .all
+        #else
+        // Prefer NE on iPhone / Vision Pro when available.
         config.computeUnits = .cpuAndNeuralEngine
+        #endif
 #endif
         let model = try MLModel(contentsOf: compiledModelURL, configuration: config)
         self.model = model

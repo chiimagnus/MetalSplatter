@@ -12,6 +12,13 @@ import Mach
 actor SharpLocalSplatGenerator {
     private static let log = Logger(subsystem: "MetalSplatterSampleApp", category: "SharpLocalSplatGenerator")
 
+    enum ComputePreference: String, Sendable, CaseIterable {
+        case auto
+        case cpuAndNeuralEngine
+        case cpuOnly
+        case all
+    }
+
     enum Error: LocalizedError {
         case unsupportedModelInputs([String])
         case unsupportedModelOutputs([String])
@@ -58,9 +65,11 @@ actor SharpLocalSplatGenerator {
     func generate(from imageData: Data,
                   disparityFactor: Float = 1.0,
                   maxOutputPoints: Int? = nil,
+                  computePreference: ComputePreference = .auto,
                   progress: (@Sendable (Double) -> Void)? = nil) async throws -> GenerationResult {
         try await generateInternal(disparityFactor: disparityFactor,
                                    maxOutputPoints: maxOutputPoints,
+                                   computePreference: computePreference,
                                    progress: progress,
                                    sourceImageProvider: { inputSize in
             let maxPixelSize = max(Int(inputSize.width), Int(inputSize.height))
@@ -74,15 +83,18 @@ actor SharpLocalSplatGenerator {
     func generate(from sourceImage: CGImage,
                   disparityFactor: Float = 1.0,
                   maxOutputPoints: Int? = nil,
+                  computePreference: ComputePreference = .auto,
                   progress: (@Sendable (Double) -> Void)? = nil) async throws -> GenerationResult {
         try await generateInternal(disparityFactor: disparityFactor,
                                    maxOutputPoints: maxOutputPoints,
+                                   computePreference: computePreference,
                                    progress: progress,
                                    sourceImageProvider: { _ in sourceImage })
     }
 
     private func generateInternal(disparityFactor: Float,
                                   maxOutputPoints: Int?,
+                                  computePreference: ComputePreference,
                                   progress: (@Sendable (Double) -> Void)?,
                                   sourceImageProvider: (CGSize) throws -> CGImage) async throws -> GenerationResult {
 #if os(visionOS) && targetEnvironment(simulator)
@@ -90,13 +102,13 @@ actor SharpLocalSplatGenerator {
         throw Error.unsupportedOnVisionOSSimulator
 #endif
 
-        Self.log.info("Starting generation. disparityFactor=\(disparityFactor, privacy: .public)")
+        Self.log.info("Starting generation. disparityFactor=\(disparityFactor, privacy: .public), computePreference=\(computePreference.rawValue, privacy: .public), maxOutputPoints=\(String(describing: maxOutputPoints), privacy: .public)")
         let compiledURL = try await SharpModelResources.ensureCompiledModelAvailable(progress: { value in
             progress?(min(value * 0.2, 0.2))
         })
         Self.log.info("Compiled model URL: \(compiledURL.path, privacy: .public)")
 
-        let (model, io) = try await loadModelAndIO(compiledModelURL: compiledURL)
+        let (model, io) = try await loadModelAndIO(compiledModelURL: compiledURL, computePreference: computePreference)
         Self.log.info("Model IO resolved. imageInput=\(io.imageInputName, privacy: .public), disparityInput=\(io.disparityInputName ?? "(none)", privacy: .public)")
         let inputSize = inferInputSize(model: model, imageInputName: io.imageInputName) ?? CGSize(width: 1536, height: 1536)
         Self.log.info("Using model input size: \(Int(inputSize.width))x\(Int(inputSize.height))")
@@ -122,10 +134,12 @@ actor SharpLocalSplatGenerator {
 
         progress?(0.25)
         let provider = try MLDictionaryFeatureProvider(dictionary: inputs)
-        let computeUnitCandidates = predictComputeUnitCandidates()
+        let computeUnitCandidates = predictComputeUnitCandidates(preference: computePreference)
         Self.log.info("Starting prediction (computeUnitsCandidates=\(String(describing: computeUnitCandidates), privacy: .public)).")
         let predictionStart = Date()
-        let output = try await predictWithFallback(compiledModelURL: compiledURL, provider: provider)
+        let output = try await predictWithFallback(compiledModelURL: compiledURL,
+                                                   provider: provider,
+                                                   computeUnitCandidates: computeUnitCandidates)
         let predictionSeconds = Date().timeIntervalSince(predictionStart)
         Self.log.info("Prediction finished in \(predictionSeconds, privacy: .public)s.")
         logMemory("after_prediction")
@@ -197,23 +211,9 @@ actor SharpLocalSplatGenerator {
         return GenerationResult(plyURL: outURL, pointCount: outputPointCount)
     }
 
-    private func loadModelAndIO(compiledModelURL: URL) async throws -> (MLModel, SharpModelIO) {
-        let preferredUnits: MLComputeUnits
-
-#if targetEnvironment(simulator)
-        preferredUnits = .cpuOnly
-#else
-        #if os(macOS)
-        // Match upstream (sharp.swift).
-        preferredUnits = .all
-        #elseif os(iOS)
-        // Prefer Neural Engine on iOS to reduce GPU memory pressure and avoid BNNS-only failures.
-        preferredUnits = .cpuAndNeuralEngine
-        #else
-        preferredUnits = .cpuAndNeuralEngine
-        #endif
-#endif
-
+    private func loadModelAndIO(compiledModelURL: URL, computePreference: ComputePreference) async throws -> (MLModel, SharpModelIO) {
+        let candidates = predictComputeUnitCandidates(preference: computePreference)
+        let preferredUnits = candidates.first ?? .all
         let model = try loadModel(compiledModelURL: compiledModelURL, computeUnits: preferredUnits)
         let io = try resolveIO(model: model)
         return (model, io)
@@ -226,6 +226,7 @@ actor SharpLocalSplatGenerator {
 
         let config = MLModelConfiguration()
         config.computeUnits = computeUnits
+        config.allowLowPrecisionAccumulationOnGPU = true
 
         Self.log.info("Loading model with computeUnits=\(String(describing: computeUnits), privacy: .public)")
         let model = try MLModel(contentsOf: compiledModelURL, configuration: config)
@@ -234,8 +235,9 @@ actor SharpLocalSplatGenerator {
         return model
     }
 
-    private func predictWithFallback(compiledModelURL: URL, provider: MLDictionaryFeatureProvider) async throws -> MLFeatureProvider {
-        let computeUnitCandidates = predictComputeUnitCandidates()
+    private func predictWithFallback(compiledModelURL: URL,
+                                     provider: MLDictionaryFeatureProvider,
+                                     computeUnitCandidates: [MLComputeUnits]) async throws -> MLFeatureProvider {
         var lastError: Swift.Error?
         for units in computeUnitCandidates {
             do {
@@ -252,17 +254,33 @@ actor SharpLocalSplatGenerator {
         throw Error.predictionFailed(lastError?.localizedDescription ?? "Core ML prediction failed.")
     }
 
-    private func predictComputeUnitCandidates() -> [MLComputeUnits] {
+    private func predictComputeUnitCandidates(preference: ComputePreference) -> [MLComputeUnits] {
 #if targetEnvironment(simulator)
-        [ .cpuOnly ]
+        switch preference {
+        case .all:
+            return [ .all, .cpuOnly ]
+        case .cpuAndNeuralEngine:
+            return [ .cpuAndNeuralEngine, .cpuOnly ]
+        case .cpuOnly:
+            return [ .cpuOnly ]
+        case .auto:
+            return [ .cpuOnly ]
+        }
 #else
-        #if os(iOS)
-        [ .cpuAndNeuralEngine, .all, .cpuOnly ]
-        #elseif os(macOS)
-        [ .all ]
-        #else
-        [ .cpuAndNeuralEngine, .all, .cpuOnly ]
-        #endif
+        switch preference {
+        case .cpuOnly:
+            return [ .cpuOnly ]
+        case .cpuAndNeuralEngine:
+            return [ .cpuAndNeuralEngine, .cpuOnly ]
+        case .all:
+            return [ .all, .cpuAndNeuralEngine, .cpuOnly ]
+        case .auto:
+            #if os(macOS)
+            return [ .all ]
+            #else
+            return [ .cpuAndNeuralEngine, .all, .cpuOnly ]
+            #endif
+        }
 #endif
     }
 
@@ -290,6 +308,11 @@ private func predictSync(model: MLModel, provider: MLDictionaryFeatureProvider) 
     return try await withCheckedThrowingContinuation { continuation in
         DispatchQueue.global(qos: .userInitiated).async {
             autoreleasepool {
+                #if DEBUG
+                let sampler = PredictionMemorySampler()
+                sampler.start()
+                defer { sampler.stop() }
+                #endif
                 do {
                     let output = try modelBox.value.prediction(from: providerBox.value)
                     continuation.resume(returning: output)
@@ -300,6 +323,48 @@ private func predictSync(model: MLModel, provider: MLDictionaryFeatureProvider) 
         }
     }
 }
+
+#if DEBUG
+private final class PredictionMemorySampler: @unchecked Sendable {
+    private static let log = Logger(subsystem: "MetalSplatterSampleApp", category: "SharpLocalSplatGenerator")
+    private let queue = DispatchQueue(label: "MetalSplatterSampleApp.PredictionMemorySampler")
+    private var timer: DispatchSourceTimer?
+
+    func start() {
+        queue.async {
+            guard self.timer == nil else { return }
+            let t = DispatchSource.makeTimerSource(queue: self.queue)
+            t.schedule(deadline: .now() + 0.5, repeating: 1.0)
+            t.setEventHandler {
+                if let bytes = currentResidentMemoryBytes() {
+                    Self.log.info("Memory during_prediction: resident=\(bytes, privacy: .public) bytes")
+                }
+            }
+            self.timer = t
+            t.resume()
+        }
+    }
+
+    func stop() {
+        queue.async {
+            self.timer?.cancel()
+            self.timer = nil
+        }
+    }
+}
+
+private func currentResidentMemoryBytes() -> UInt64? {
+    var info = mach_task_basic_info()
+    var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<natural_t>.size)
+    let kerr = withUnsafeMutablePointer(to: &info) { infoPtr in
+        infoPtr.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { intPtr in
+            task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), intPtr, &count)
+        }
+    }
+    guard kerr == KERN_SUCCESS else { return nil }
+    return UInt64(info.resident_size)
+}
+#endif
 
 private func generatedPLYURL() throws -> URL {
     let base = try FileManager.default.url(for: .applicationSupportDirectory,

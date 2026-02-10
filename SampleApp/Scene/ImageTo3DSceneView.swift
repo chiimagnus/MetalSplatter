@@ -47,6 +47,33 @@ struct ImageTo3DSceneView: View {
         }
     }
 
+    private enum ComputeMode: String, CaseIterable, Identifiable {
+        case auto
+        case cpuAndNeuralEngine
+        case cpuOnly
+        case all
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .auto: "Auto"
+            case .cpuAndNeuralEngine: "CPU+NE"
+            case .cpuOnly: "CPU"
+            case .all: "All"
+            }
+        }
+
+        var preference: SharpLocalSplatGenerator.ComputePreference {
+            switch self {
+            case .auto: .auto
+            case .cpuAndNeuralEngine: .cpuAndNeuralEngine
+            case .cpuOnly: .cpuOnly
+            case .all: .all
+            }
+        }
+    }
+
     private var isInferenceSupported: Bool {
 #if os(visionOS) && targetEnvironment(simulator)
         false
@@ -83,6 +110,8 @@ struct ImageTo3DSceneView: View {
         }
     }
 
+    @State private var computeMode: ComputeMode = .auto
+
     var body: some View {
         VStack(spacing: 16) {
             Text("Image to 3D Scene")
@@ -117,6 +146,14 @@ struct ImageTo3DSceneView: View {
             Picker("Quality", selection: $outputQuality) {
                 ForEach(OutputQuality.allCases) { quality in
                     Text(quality.title).tag(quality)
+                }
+            }
+            .pickerStyle(.segmented)
+            .disabled(isGenerating)
+
+            Picker("Compute", selection: $computeMode) {
+                ForEach(ComputeMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
                 }
             }
             .pickerStyle(.segmented)
@@ -293,6 +330,7 @@ struct ImageTo3DSceneView: View {
 
             let result = try await generator.generate(from: data,
                                                       maxOutputPoints: maxOutputPoints,
+                                                      computePreference: computeMode.preference,
                                                       progress: { value in
                 Task { @MainActor in
                     generationProgress = value

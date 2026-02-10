@@ -18,7 +18,6 @@ actor SharpLocalSplatGenerator {
         case unsupportedImage
         case unsupportedMultiArrayDataType(MLMultiArrayDataType)
         case unsupportedOnVisionOSSimulator
-        case insufficientDeviceMemory(requiredBytes: UInt64, physicalBytes: UInt64)
         case predictionFailed(String)
 
         var errorDescription: String? {
@@ -33,10 +32,6 @@ actor SharpLocalSplatGenerator {
                 return "Unsupported MLMultiArray data type: \(type)"
             case .unsupportedOnVisionOSSimulator:
                 return "SHARP Core ML inference is not supported on visionOS Simulator. Please run on a real device."
-            case let .insufficientDeviceMemory(requiredBytes, physicalBytes):
-                let requiredGB = Double(requiredBytes) / (1024 * 1024 * 1024)
-                let deviceGB = Double(physicalBytes) / (1024 * 1024 * 1024)
-                return String(format: "This device may not have enough RAM for local SHARP processing (requires ~%.0f GB, device has ~%.0f GB). Try generating the PLY on macOS and rendering the PLY here.", requiredGB, deviceGB)
             case .predictionFailed(let message):
                 return message
             }
@@ -62,10 +57,10 @@ actor SharpLocalSplatGenerator {
 
     func generate(from imageData: Data,
                   disparityFactor: Float = 1.0,
-                  allowLowMemoryDevice: Bool = false,
+                  maxOutputPoints: Int? = nil,
                   progress: (@Sendable (Double) -> Void)? = nil) async throws -> GenerationResult {
         try await generateInternal(disparityFactor: disparityFactor,
-                                   allowLowMemoryDevice: allowLowMemoryDevice,
+                                   maxOutputPoints: maxOutputPoints,
                                    progress: progress,
                                    sourceImageProvider: { inputSize in
             let maxPixelSize = max(Int(inputSize.width), Int(inputSize.height))
@@ -78,16 +73,16 @@ actor SharpLocalSplatGenerator {
 
     func generate(from sourceImage: CGImage,
                   disparityFactor: Float = 1.0,
-                  allowLowMemoryDevice: Bool = false,
+                  maxOutputPoints: Int? = nil,
                   progress: (@Sendable (Double) -> Void)? = nil) async throws -> GenerationResult {
         try await generateInternal(disparityFactor: disparityFactor,
-                                   allowLowMemoryDevice: allowLowMemoryDevice,
+                                   maxOutputPoints: maxOutputPoints,
                                    progress: progress,
                                    sourceImageProvider: { _ in sourceImage })
     }
 
     private func generateInternal(disparityFactor: Float,
-                                  allowLowMemoryDevice: Bool,
+                                  maxOutputPoints: Int?,
                                   progress: (@Sendable (Double) -> Void)?,
                                   sourceImageProvider: (CGSize) throws -> CGImage) async throws -> GenerationResult {
 #if os(visionOS) && targetEnvironment(simulator)
@@ -109,14 +104,6 @@ actor SharpLocalSplatGenerator {
 
         let physicalMemory = ProcessInfo.processInfo.physicalMemory
         Self.log.info("Device physical memory: \(physicalMemory, privacy: .public) bytes")
-
-#if os(iOS) || os(visionOS)
-        let required = UInt64(8) * 1024 * 1024 * 1024
-        if !allowLowMemoryDevice && physicalMemory > 0 && physicalMemory < required {
-            Self.log.warning("Insufficient device memory for local SHARP processing. required=\(required, privacy: .public), physical=\(physicalMemory, privacy: .public)")
-            throw Error.insufficientDeviceMemory(requiredBytes: required, physicalBytes: physicalMemory)
-        }
-#endif
 
         let sourceImage = try sourceImageProvider(inputSize)
         Self.log.info("Decoded source image. image=\(sourceImage.width)x\(sourceImage.height)")
@@ -146,7 +133,13 @@ actor SharpLocalSplatGenerator {
 
         let tensors = try resolveOutputs(io: io, output: output)
         let pointCount = tensors.positions.pointCount
-        Self.log.info("Resolved outputs. pointCount=\(pointCount, privacy: .public)")
+        let outputStride = Self.outputStride(pointCount: pointCount, maxOutputPoints: maxOutputPoints)
+        let outputPointCount = Self.outputPointCount(pointCount: pointCount, stride: outputStride)
+        if outputStride > 1 {
+            Self.log.info("Resolved outputs. pointCount=\(pointCount, privacy: .public), outputStride=\(outputStride, privacy: .public), outputPointCount=\(outputPointCount, privacy: .public)")
+        } else {
+            Self.log.info("Resolved outputs. pointCount=\(pointCount, privacy: .public)")
+        }
 
         // Release the model as early as possible to reduce steady-state memory use after inference.
         // Core ML may still retain internal caches, but this helps drop our strong reference.
@@ -158,17 +151,18 @@ actor SharpLocalSplatGenerator {
 
         Self.log.info("Writing PLY to: \(outURL.path, privacy: .public)")
         let writer = try SplatPLYSceneWriter(to: .file(outURL))
-        try await writer.start(sphericalHarmonicDegree: 0, binary: true, pointCount: pointCount)
+        try await writer.start(sphericalHarmonicDegree: 0, binary: true, pointCount: outputPointCount)
 
         let chunkSize = 2048
         var written = 0
-        while written < pointCount {
-            let nextCount = min(chunkSize, pointCount - written)
+        while written < outputPointCount {
+            let nextCount = min(chunkSize, outputPointCount - written)
             var points: [SplatPoint] = []
             points.reserveCapacity(nextCount)
 
             for i in 0..<nextCount {
-                let idx = written + i
+                let outputIndex = written + i
+                let idx = outputIndex * outputStride
                 let position = tensors.positions.xyz(pointIndex: idx)
                 let scales = tensors.scales.xyz(pointIndex: idx).clamped(min: 1e-8)
                 let rotation = tensors.rotations.quaternion(pointIndex: idx).normalized
@@ -190,7 +184,7 @@ actor SharpLocalSplatGenerator {
 
             try await writer.write(points)
             written += nextCount
-            progress?(0.35 + (Double(written) / Double(pointCount)) * 0.65)
+            progress?(0.35 + (Double(written) / Double(max(1, outputPointCount))) * 0.65)
         }
 
         try await writer.close()
@@ -200,7 +194,7 @@ actor SharpLocalSplatGenerator {
         } else {
             Self.log.info("PLY write complete.")
         }
-        return GenerationResult(plyURL: outURL, pointCount: pointCount)
+        return GenerationResult(plyURL: outURL, pointCount: outputPointCount)
     }
 
     private func loadModelAndIO(compiledModelURL: URL) async throws -> (MLModel, SharpModelIO) {
@@ -270,6 +264,18 @@ actor SharpLocalSplatGenerator {
         [ .cpuAndNeuralEngine, .all, .cpuOnly ]
         #endif
 #endif
+    }
+
+    private static func outputStride(pointCount: Int, maxOutputPoints: Int?) -> Int {
+        guard let maxOutputPoints, maxOutputPoints > 0 else { return 1 }
+        guard pointCount > maxOutputPoints else { return 1 }
+        return Int(ceil(Double(pointCount) / Double(maxOutputPoints)))
+    }
+
+    private static func outputPointCount(pointCount: Int, stride: Int) -> Int {
+        guard pointCount > 0 else { return 0 }
+        let stride = max(1, stride)
+        return (pointCount + stride - 1) / stride
     }
 }
 

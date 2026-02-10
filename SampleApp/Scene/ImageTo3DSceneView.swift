@@ -5,7 +5,6 @@ import AppKit
 #endif
 import PhotosUI
 import SwiftUI
-import ImageIO
 
 struct ImageTo3DSceneView: View {
     let openModel: @MainActor (ModelIdentifier) -> Void
@@ -13,7 +12,8 @@ struct ImageTo3DSceneView: View {
     @State private var processLocally = true
     @State private var selectedPhotoItem: PhotosPickerItem?
 
-    @State private var allowLowMemoryDevice = false
+    @State private var outputQuality: OutputQuality = .balanced
+    @State private var didInitializeQuality = false
 
     @State private var isDownloadingModel = false
     @State private var modelDownloadProgress: Double = 0
@@ -31,6 +31,22 @@ struct ImageTo3DSceneView: View {
 
     private let generator = SharpLocalSplatGenerator()
 
+    private enum OutputQuality: String, CaseIterable, Identifiable {
+        case full
+        case balanced
+        case low
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .full: "Full"
+            case .balanced: "Balanced"
+            case .low: "Low"
+            }
+        }
+    }
+
     private var isInferenceSupported: Bool {
 #if os(visionOS) && targetEnvironment(simulator)
         false
@@ -39,14 +55,32 @@ struct ImageTo3DSceneView: View {
 #endif
     }
 
-    private var isLowMemoryDevice: Bool {
+    private var recommendedMaxOutputPoints: Int? {
 #if os(iOS) || os(visionOS)
-        let required = UInt64(8) * 1024 * 1024 * 1024
         let physical = ProcessInfo.processInfo.physicalMemory
-        return physical > 0 && physical < required
+        let gb = UInt64(1024 * 1024 * 1024)
+        guard physical > 0 else { return nil }
+        if physical < 4 * gb { return 150_000 }
+        if physical < 6 * gb { return 300_000 }
+        if physical < 8 * gb { return 600_000 }
+        return nil
 #else
-        false
+        nil
 #endif
+    }
+
+    private var maxOutputPoints: Int? {
+        switch outputQuality {
+        case .full:
+            return nil
+        case .balanced:
+            return recommendedMaxOutputPoints
+        case .low:
+            if let recommendedMaxOutputPoints {
+                return max(50_000, recommendedMaxOutputPoints / 2)
+            }
+            return 300_000
+        }
     }
 
     var body: some View {
@@ -80,11 +114,16 @@ struct ImageTo3DSceneView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
-            if isLowMemoryDevice {
-                Toggle("Force Run on Low‑Memory Device (May Crash)", isOn: $allowLowMemoryDevice)
-                    .font(.footnote)
-                    .disabled(isGenerating)
-                Text("SHARP may require ≥ 8 GB RAM. Recommended workflow: generate the PLY on macOS, then AirDrop/import the PLY to render on device.")
+            Picker("Quality", selection: $outputQuality) {
+                ForEach(OutputQuality.allCases) { quality in
+                    Text(quality.title).tag(quality)
+                }
+            }
+            .pickerStyle(.segmented)
+            .disabled(isGenerating)
+
+            if recommendedMaxOutputPoints != nil, outputQuality == .full {
+                Text("Full quality may be unstable on low‑memory devices. If you see memory termination, switch to Balanced/Low (fewer points).")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -96,7 +135,7 @@ struct ImageTo3DSceneView: View {
                 }
             }
             .buttonStyle(.bordered)
-            .disabled(!processLocally || isGenerating || !isInferenceSupported || (isLowMemoryDevice && !allowLowMemoryDevice))
+            .disabled(!processLocally || isGenerating || !isInferenceSupported)
 
             if !isInferenceSupported {
                 Text("Local SHARP inference is not supported on visionOS Simulator. Run on device to generate PLY.")
@@ -171,6 +210,10 @@ struct ImageTo3DSceneView: View {
         }
         .onAppear {
             refreshLocalModelState()
+            if !didInitializeQuality {
+                outputQuality = (recommendedMaxOutputPoints == nil) ? .full : .balanced
+                didInitializeQuality = true
+            }
         }
         .onChange(of: selectedPhotoItem) { _, newValue in
             guard let newValue else { return }
@@ -249,7 +292,7 @@ struct ImageTo3DSceneView: View {
             }
 
             let result = try await generator.generate(from: data,
-                                                      allowLowMemoryDevice: allowLowMemoryDevice,
+                                                      maxOutputPoints: maxOutputPoints,
                                                       progress: { value in
                 Task { @MainActor in
                     generationProgress = value
@@ -295,13 +338,6 @@ struct ImageTo3DSceneView: View {
                 errorMessage = error.localizedDescription
             }
         }
-    }
-}
-
-private extension CGImage {
-    static func fromImageData(_ data: Data) -> CGImage? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
-        return CGImageSourceCreateImageAtIndex(source, 0, nil)
     }
 }
 

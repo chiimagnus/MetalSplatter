@@ -88,6 +88,7 @@ enum SharpModelResources {
             let compiledSourceURL = try compileIfNeeded(sourceURL)
             progress(0.85)
             try replaceItem(at: compiledURL, with: compiledSourceURL)
+            cleanupTemporaryCompiledModelIfNeeded(sourceURL: sourceURL, compiledSourceURL: compiledSourceURL)
             progress(1)
             return compiledURL
 #else
@@ -110,6 +111,7 @@ enum SharpModelResources {
             let compiledSourceURL = try compileIfNeeded(sourceURL)
             progress(0.85)
             try replaceItem(at: compiledURL, with: compiledSourceURL)
+            cleanupTemporaryCompiledModelIfNeeded(sourceURL: sourceURL, compiledSourceURL: compiledSourceURL)
             progress(1)
             return compiledURL
 #endif
@@ -161,5 +163,15 @@ enum SharpModelResources {
             try FileManager.default.removeItem(at: destinationURL)
         }
         try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+    }
+
+    private static func cleanupTemporaryCompiledModelIfNeeded(sourceURL: URL, compiledSourceURL: URL) {
+        guard sourceURL != compiledSourceURL else { return }
+
+        let tmpPath = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().path
+        let compiledPath = compiledSourceURL.resolvingSymlinksInPath().path
+        guard compiledPath.hasPrefix(tmpPath) else { return }
+
+        try? FileManager.default.removeItem(at: compiledSourceURL)
     }
 }

@@ -15,6 +15,7 @@ actor SharpLocalSplatGenerator {
     enum ComputePreference: String, Sendable, CaseIterable {
         case auto
         case cpuAndNeuralEngine
+        case cpuAndGPU
         case cpuOnly
         case all
     }
@@ -108,7 +109,8 @@ actor SharpLocalSplatGenerator {
         })
         Self.log.info("Compiled model URL: \(compiledURL.path, privacy: .public)")
 
-        let (model, io) = try await loadModelAndIO(compiledModelURL: compiledURL, computePreference: computePreference)
+        let computeUnitCandidates = predictComputeUnitCandidates(preference: computePreference)
+        let (model, io) = try await loadModelAndIOWithFallback(compiledModelURL: compiledURL, computeUnitCandidates: computeUnitCandidates)
         Self.log.info("Model IO resolved. imageInput=\(io.imageInputName, privacy: .public), disparityInput=\(io.disparityInputName ?? "(none)", privacy: .public)")
         let inputSize = inferInputSize(model: model, imageInputName: io.imageInputName) ?? CGSize(width: 1536, height: 1536)
         Self.log.info("Using model input size: \(Int(inputSize.width))x\(Int(inputSize.height))")
@@ -116,6 +118,9 @@ actor SharpLocalSplatGenerator {
 
         let physicalMemory = ProcessInfo.processInfo.physicalMemory
         Self.log.info("Device physical memory: \(physicalMemory, privacy: .public) bytes")
+        if let availableDisk = SharpModelResources.availableDiskBytes() {
+            Self.log.info("Available disk bytes (important usage): \(availableDisk, privacy: .public)")
+        }
 
         let sourceImage = try sourceImageProvider(inputSize)
         Self.log.info("Decoded source image. image=\(sourceImage.width)x\(sourceImage.height)")
@@ -134,7 +139,6 @@ actor SharpLocalSplatGenerator {
 
         progress?(0.25)
         let provider = try MLDictionaryFeatureProvider(dictionary: inputs)
-        let computeUnitCandidates = predictComputeUnitCandidates(preference: computePreference)
         Self.log.info("Starting prediction (computeUnitsCandidates=\(computeUnitCandidates.map(Self.computeUnitsDisplayName).joined(separator: ", "), privacy: .public)).")
         let predictionStart = Date()
         let output = try await predictWithFallback(compiledModelURL: compiledURL,
@@ -211,12 +215,27 @@ actor SharpLocalSplatGenerator {
         return GenerationResult(plyURL: outURL, pointCount: outputPointCount)
     }
 
-    private func loadModelAndIO(compiledModelURL: URL, computePreference: ComputePreference) async throws -> (MLModel, SharpModelIO) {
-        let candidates = predictComputeUnitCandidates(preference: computePreference)
-        let preferredUnits = candidates.first ?? .all
-        let model = try loadModel(compiledModelURL: compiledModelURL, computeUnits: preferredUnits)
-        let io = try resolveIO(model: model)
-        return (model, io)
+    private func loadModelAndIOWithFallback(compiledModelURL: URL,
+                                           computeUnitCandidates: [MLComputeUnits]) async throws -> (MLModel, SharpModelIO) {
+        var lastError: Swift.Error?
+        for units in computeUnitCandidates {
+            do {
+                Self.log.info("Attempting model load with computeUnits=\(Self.computeUnitsDisplayName(units), privacy: .public)")
+                let model = try loadModel(compiledModelURL: compiledModelURL, computeUnits: units)
+                let io = try resolveIO(model: model)
+                return (model, io)
+            } catch {
+                lastError = error
+                let friendly = Self.friendlyCoreMLErrorMessage(error) ?? error.localizedDescription
+                Self.log.error("Model load failed with computeUnits=\(Self.computeUnitsDisplayName(units), privacy: .public): \(friendly, privacy: .public)")
+                unloadModel()
+            }
+        }
+
+        if let lastError, let friendly = Self.friendlyCoreMLErrorMessage(lastError) {
+            throw Error.predictionFailed(friendly)
+        }
+        throw lastError ?? Error.predictionFailed("Core ML model load failed.")
     }
 
     private func loadModel(compiledModelURL: URL, computeUnits: MLComputeUnits) throws -> MLModel {
@@ -264,6 +283,8 @@ actor SharpLocalSplatGenerator {
             return [ .all, .cpuOnly ]
         case .cpuAndNeuralEngine:
             return [ .cpuAndNeuralEngine, .cpuOnly ]
+        case .cpuAndGPU:
+            return [ .cpuAndGPU, .cpuOnly ]
         case .cpuOnly:
             return [ .cpuOnly ]
         case .auto:
@@ -275,6 +296,8 @@ actor SharpLocalSplatGenerator {
             return [ .cpuOnly ]
         case .cpuAndNeuralEngine:
             return [ .cpuAndNeuralEngine, .cpuOnly ]
+        case .cpuAndGPU:
+            return [ .cpuAndGPU, .cpuOnly ]
         case .all:
             #if os(macOS)
             return [ .all ]

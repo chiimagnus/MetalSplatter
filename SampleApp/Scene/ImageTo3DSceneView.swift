@@ -50,6 +50,7 @@ struct ImageTo3DSceneView: View {
     private enum ComputeMode: String, CaseIterable, Identifiable {
         case auto
         case cpuAndNeuralEngine
+        case cpuAndGPU
         case cpuOnly
         case all
 
@@ -59,6 +60,7 @@ struct ImageTo3DSceneView: View {
             switch self {
             case .auto: "Auto"
             case .cpuAndNeuralEngine: "CPU+NE"
+            case .cpuAndGPU: "CPU+GPU"
             case .cpuOnly: "CPU"
             case .all: "All"
             }
@@ -68,6 +70,7 @@ struct ImageTo3DSceneView: View {
             switch self {
             case .auto: .auto
             case .cpuAndNeuralEngine: .cpuAndNeuralEngine
+            case .cpuAndGPU: .cpuAndGPU
             case .cpuOnly: .cpuOnly
             case .all: .all
             }

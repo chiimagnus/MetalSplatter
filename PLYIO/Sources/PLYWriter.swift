@@ -96,30 +96,33 @@ public class PLYWriter {
             throw Error.headerNotYetWritten
         }
 
-        var remainingElements: [PLYElement]
+        let totalCount: Int
         if let count {
             guard count > 0 else { return }
-            remainingElements = Array(elements[0..<count])
+            totalCount = min(count, elements.count)
         } else {
-            remainingElements = elements
+            totalCount = elements.count
         }
 
-        while !remainingElements.isEmpty {
+        var startIndex = 0
+        while startIndex < totalCount {
             guard currentElementGroupIndex < header.elements.count else {
                 throw Error.unexpectedElement
             }
             let elementHeader = header.elements[currentElementGroupIndex]
-            let countInGroup = min(remainingElements.count, Int(elementHeader.count) - currentElementCountInGroup)
+            let remaining = totalCount - startIndex
+            let remainingInGroup = Int(elementHeader.count) - currentElementCountInGroup
+            let countInGroup = min(remaining, remainingInGroup)
 
             if ascii {
                 for i in 0..<countInGroup {
-                    try await outputStream.write(remainingElements[i].description)
+                    try await outputStream.write(elements[startIndex + i].description)
                     try await outputStream.write("\n")
                 }
             } else {
                 var bufferOffset = 0
                 for i in 0..<countInGroup {
-                    let element = remainingElements[i]
+                    let element = elements[startIndex + i]
                     let remainingBufferCapacity = bufferSize - bufferOffset
                     let elementByteWidth = try element.encodedBinaryByteWidth(type: elementHeader)
                     if elementByteWidth > remainingBufferCapacity {
@@ -144,7 +147,7 @@ public class PLYWriter {
                 try await dumpBuffer(length: bufferOffset)
             }
 
-            remainingElements = Array(remainingElements.dropFirst(countInGroup))
+            startIndex += countInGroup
 
             currentElementCountInGroup += countInGroup
             while (currentElementGroupIndex < header.elements.count) &&

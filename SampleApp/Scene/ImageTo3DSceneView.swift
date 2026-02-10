@@ -13,6 +13,8 @@ struct ImageTo3DSceneView: View {
     @State private var processLocally = true
     @State private var selectedPhotoItem: PhotosPickerItem?
 
+    @State private var allowLowMemoryDevice = false
+
     @State private var isDownloadingModel = false
     @State private var modelDownloadProgress: Double = 0
     @State private var hasLocalModel = false
@@ -34,6 +36,16 @@ struct ImageTo3DSceneView: View {
         false
 #else
         true
+#endif
+    }
+
+    private var isLowMemoryDevice: Bool {
+#if os(iOS) || os(visionOS)
+        let required = UInt64(8) * 1024 * 1024 * 1024
+        let physical = ProcessInfo.processInfo.physicalMemory
+        return physical > 0 && physical < required
+#else
+        false
 #endif
     }
 
@@ -68,6 +80,15 @@ struct ImageTo3DSceneView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
+            if isLowMemoryDevice {
+                Toggle("Force Run on Low‑Memory Device (May Crash)", isOn: $allowLowMemoryDevice)
+                    .font(.footnote)
+                    .disabled(isGenerating)
+                Text("SHARP may require ≥ 8 GB RAM. Recommended workflow: generate the PLY on macOS, then AirDrop/import the PLY to render on device.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
             PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
                 HStack {
                     Image(systemName: "photo.on.rectangle")
@@ -75,7 +96,7 @@ struct ImageTo3DSceneView: View {
                 }
             }
             .buttonStyle(.bordered)
-            .disabled(!processLocally || isGenerating || !isInferenceSupported)
+            .disabled(!processLocally || isGenerating || !isInferenceSupported || (isLowMemoryDevice && !allowLowMemoryDevice))
 
             if !isInferenceSupported {
                 Text("Local SHARP inference is not supported on visionOS Simulator. Run on device to generate PLY.")
@@ -223,12 +244,13 @@ struct ImageTo3DSceneView: View {
         }
 
         do {
-            guard let data = try await item.loadTransferable(type: Data.self),
-                  let cgImage = CGImage.fromImageData(data) else {
+            guard let data = try await item.loadTransferable(type: Data.self) else {
                 throw SharpLocalSplatGenerator.Error.unsupportedImage
             }
 
-            let result = try await generator.generate(from: cgImage, progress: { value in
+            let result = try await generator.generate(from: data,
+                                                      allowLowMemoryDevice: allowLowMemoryDevice,
+                                                      progress: { value in
                 Task { @MainActor in
                     generationProgress = value
                 }

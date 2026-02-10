@@ -4,6 +4,10 @@ import Foundation
 import SplatIO
 import simd
 import os
+import ImageIO
+#if canImport(Mach)
+import Mach
+#endif
 
 actor SharpLocalSplatGenerator {
     private static let log = Logger(subsystem: "MetalSplatterSampleApp", category: "SharpLocalSplatGenerator")
@@ -14,22 +18,27 @@ actor SharpLocalSplatGenerator {
         case unsupportedImage
         case unsupportedMultiArrayDataType(MLMultiArrayDataType)
         case unsupportedOnVisionOSSimulator
+        case insufficientDeviceMemory(requiredBytes: UInt64, physicalBytes: UInt64)
         case predictionFailed(String)
 
         var errorDescription: String? {
             switch self {
             case .unsupportedModelInputs(let inputs):
-                "Unsupported model inputs: \(inputs.joined(separator: ", "))"
+                return "Unsupported model inputs: \(inputs.joined(separator: ", "))"
             case .unsupportedModelOutputs(let outputs):
-                "Unsupported model outputs: \(outputs.joined(separator: ", "))"
+                return "Unsupported model outputs: \(outputs.joined(separator: ", "))"
             case .unsupportedImage:
-                "Unsupported image."
+                return "Unsupported image."
             case .unsupportedMultiArrayDataType(let type):
-                "Unsupported MLMultiArray data type: \(type)"
+                return "Unsupported MLMultiArray data type: \(type)"
             case .unsupportedOnVisionOSSimulator:
-                "SHARP Core ML inference is not supported on visionOS Simulator. Please run on a real device."
+                return "SHARP Core ML inference is not supported on visionOS Simulator. Please run on a real device."
+            case let .insufficientDeviceMemory(requiredBytes, physicalBytes):
+                let requiredGB = Double(requiredBytes) / (1024 * 1024 * 1024)
+                let deviceGB = Double(physicalBytes) / (1024 * 1024 * 1024)
+                return String(format: "This device may not have enough RAM for local SHARP processing (requires ~%.0f GB, device has ~%.0f GB). Try generating the PLY on macOS and rendering the PLY here.", requiredGB, deviceGB)
             case .predictionFailed(let message):
-                message
+                return message
             }
         }
     }
@@ -51,15 +60,42 @@ actor SharpLocalSplatGenerator {
         modelComputeUnits = nil
     }
 
+    func generate(from imageData: Data,
+                  disparityFactor: Float = 1.0,
+                  allowLowMemoryDevice: Bool = false,
+                  progress: (@Sendable (Double) -> Void)? = nil) async throws -> GenerationResult {
+        try await generateInternal(disparityFactor: disparityFactor,
+                                   allowLowMemoryDevice: allowLowMemoryDevice,
+                                   progress: progress,
+                                   sourceImageProvider: { inputSize in
+            let maxPixelSize = max(Int(inputSize.width), Int(inputSize.height))
+            guard let cgImage = CGImage.fromImageData(imageData, maxPixelSize: maxPixelSize) else {
+                throw Error.unsupportedImage
+            }
+            return cgImage
+        })
+    }
+
     func generate(from sourceImage: CGImage,
                   disparityFactor: Float = 1.0,
+                  allowLowMemoryDevice: Bool = false,
                   progress: (@Sendable (Double) -> Void)? = nil) async throws -> GenerationResult {
+        try await generateInternal(disparityFactor: disparityFactor,
+                                   allowLowMemoryDevice: allowLowMemoryDevice,
+                                   progress: progress,
+                                   sourceImageProvider: { _ in sourceImage })
+    }
+
+    private func generateInternal(disparityFactor: Float,
+                                  allowLowMemoryDevice: Bool,
+                                  progress: (@Sendable (Double) -> Void)?,
+                                  sourceImageProvider: (CGSize) throws -> CGImage) async throws -> GenerationResult {
 #if os(visionOS) && targetEnvironment(simulator)
         Self.log.warning("Attempted to run inference on visionOS Simulator; not supported.")
         throw Error.unsupportedOnVisionOSSimulator
 #endif
 
-        Self.log.info("Starting generation. image=\(sourceImage.width)x\(sourceImage.height), disparityFactor=\(disparityFactor, privacy: .public)")
+        Self.log.info("Starting generation. disparityFactor=\(disparityFactor, privacy: .public)")
         let compiledURL = try await SharpModelResources.ensureCompiledModelAvailable(progress: { value in
             progress?(min(value * 0.2, 0.2))
         })
@@ -69,10 +105,27 @@ actor SharpLocalSplatGenerator {
         Self.log.info("Model IO resolved. imageInput=\(io.imageInputName, privacy: .public), disparityInput=\(io.disparityInputName ?? "(none)", privacy: .public)")
         let inputSize = inferInputSize(model: model, imageInputName: io.imageInputName) ?? CGSize(width: 1536, height: 1536)
         Self.log.info("Using model input size: \(Int(inputSize.width))x\(Int(inputSize.height))")
+        logMemory("after_load_model")
+
+        let physicalMemory = ProcessInfo.processInfo.physicalMemory
+        Self.log.info("Device physical memory: \(physicalMemory, privacy: .public) bytes")
+
+#if os(iOS) || os(visionOS)
+        let required = UInt64(8) * 1024 * 1024 * 1024
+        if !allowLowMemoryDevice && physicalMemory > 0 && physicalMemory < required {
+            Self.log.warning("Insufficient device memory for local SHARP processing. required=\(required, privacy: .public), physical=\(physicalMemory, privacy: .public)")
+            throw Error.insufficientDeviceMemory(requiredBytes: required, physicalBytes: physicalMemory)
+        }
+#endif
+
+        let sourceImage = try sourceImageProvider(inputSize)
+        Self.log.info("Decoded source image. image=\(sourceImage.width)x\(sourceImage.height)")
+        logMemory("after_decode_image")
 
         guard let resized = sourceImage.resized(to: inputSize) else {
             throw Error.unsupportedImage
         }
+        logMemory("after_resize_image")
 
         let inputImageValue = try featureValue(for: resized, description: io.imageInputDescription)
         var inputs: [String: MLFeatureValue] = [ io.imageInputName: inputImageValue ]
@@ -88,6 +141,7 @@ actor SharpLocalSplatGenerator {
         let output = try await predictWithFallback(compiledModelURL: compiledURL, provider: provider)
         let predictionSeconds = Date().timeIntervalSince(predictionStart)
         Self.log.info("Prediction finished in \(predictionSeconds, privacy: .public)s.")
+        logMemory("after_prediction")
         progress?(0.35)
 
         let tensors = try resolveOutputs(io: io, output: output)
@@ -140,6 +194,7 @@ actor SharpLocalSplatGenerator {
         }
 
         try await writer.close()
+        logMemory("after_write_ply")
         if let fileSize = try? FileManager.default.attributesOfItem(atPath: outURL.path)[.size] as? NSNumber {
             Self.log.info("PLY write complete. bytes=\(fileSize.intValue, privacy: .public)")
         } else {
@@ -158,8 +213,8 @@ actor SharpLocalSplatGenerator {
         // Match upstream (sharp.swift).
         preferredUnits = .all
         #elseif os(iOS)
-        // Start with the most flexible option; we'll fall back if needed.
-        preferredUnits = .all
+        // Prefer Neural Engine on iOS to reduce GPU memory pressure and avoid BNNS-only failures.
+        preferredUnits = .cpuAndNeuralEngine
         #else
         preferredUnits = .cpuAndNeuralEngine
         #endif
@@ -208,7 +263,7 @@ actor SharpLocalSplatGenerator {
         [ .cpuOnly ]
 #else
         #if os(iOS)
-        [ .all, .cpuOnly ]
+        [ .cpuAndNeuralEngine, .all, .cpuOnly ]
         #elseif os(macOS)
         [ .all ]
         #else
@@ -228,11 +283,13 @@ private func predictSync(model: MLModel, provider: MLDictionaryFeatureProvider) 
 
     return try await withCheckedThrowingContinuation { continuation in
         DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                let output = try modelBox.value.prediction(from: providerBox.value)
-                continuation.resume(returning: output)
-            } catch {
-                continuation.resume(throwing: error)
+            autoreleasepool {
+                do {
+                    let output = try modelBox.value.prediction(from: providerBox.value)
+                    continuation.resume(returning: output)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
             }
         }
     }
@@ -511,6 +568,10 @@ private func halfToFloat(_ bits: UInt16) -> Float {
 
 private struct MultiArrayXYZ {
     private var reader: MultiArrayReader
+    private let pointStride: Int
+    private let componentStride: Int
+    private let baseOffset: Int
+    private let pointCountValue: Int
 
     init(_ array: MLMultiArray) throws {
         let reader = try MultiArrayReader(array)
@@ -521,62 +582,79 @@ private struct MultiArrayXYZ {
         guard lastDim == 3 else {
             throw SharpLocalSplatGenerator.Error.unsupportedModelOutputs([array.description])
         }
+
         self.reader = reader
+        if reader.shape.count == 3 {
+            // [1, N, 3] (or similar)
+            self.baseOffset = 0
+            self.pointStride = reader.strides[1]
+            self.componentStride = reader.strides[2]
+            self.pointCountValue = reader.shape[1]
+        } else {
+            // [N, 3]
+            self.baseOffset = 0
+            self.pointStride = reader.strides[0]
+            self.componentStride = reader.strides[1]
+            self.pointCountValue = reader.shape[0]
+        }
     }
 
     var pointCount: Int {
-        if reader.shape.count == 3 {
-            return reader.shape[1]
-        }
-        return reader.shape[0]
+        pointCountValue
     }
 
     func xyz(pointIndex: Int) -> SIMD3<Float> {
-        if reader.shape.count == 3 {
-            return SIMD3(reader.float(at: [0, pointIndex, 0]),
-                         reader.float(at: [0, pointIndex, 1]),
-                         reader.float(at: [0, pointIndex, 2]))
-        }
-        return SIMD3(reader.float(at: [pointIndex, 0]),
-                     reader.float(at: [pointIndex, 1]),
-                     reader.float(at: [pointIndex, 2]))
+        let base = baseOffset + pointIndex * pointStride
+        return SIMD3(reader.float(linearIndex: base + 0 * componentStride),
+                     reader.float(linearIndex: base + 1 * componentStride),
+                     reader.float(linearIndex: base + 2 * componentStride))
     }
 }
 
 private struct MultiArrayQuat {
     private var reader: MultiArrayReader
+    private let pointStride: Int
+    private let componentStride: Int
+    private let baseOffset: Int
 
     init(_ array: MLMultiArray) throws {
         let reader = try MultiArrayReader(array)
         guard reader.shape.count == 3 || reader.shape.count == 2 else {
             throw SharpLocalSplatGenerator.Error.unsupportedModelOutputs([array.description])
         }
+        let lastDim = reader.shape.last ?? 0
+        guard lastDim == 4 else {
+            throw SharpLocalSplatGenerator.Error.unsupportedModelOutputs([array.description])
+        }
+
         self.reader = reader
+        if reader.shape.count == 3 {
+            // [1, N, 4]
+            self.baseOffset = 0
+            self.pointStride = reader.strides[1]
+            self.componentStride = reader.strides[2]
+        } else {
+            // [N, 4]
+            self.baseOffset = 0
+            self.pointStride = reader.strides[0]
+            self.componentStride = reader.strides[1]
+        }
     }
 
     func quaternion(pointIndex: Int) -> simd_quatf {
-        let w: Float
-        let x: Float
-        let y: Float
-        let z: Float
-
-        if reader.shape.count == 3 {
-            w = reader.float(at: [0, pointIndex, 0])
-            x = reader.float(at: [0, pointIndex, 1])
-            y = reader.float(at: [0, pointIndex, 2])
-            z = reader.float(at: [0, pointIndex, 3])
-        } else {
-            w = reader.float(at: [pointIndex, 0])
-            x = reader.float(at: [pointIndex, 1])
-            y = reader.float(at: [pointIndex, 2])
-            z = reader.float(at: [pointIndex, 3])
-        }
+        let base = baseOffset + pointIndex * pointStride
+        let w = reader.float(linearIndex: base + 0 * componentStride)
+        let x = reader.float(linearIndex: base + 1 * componentStride)
+        let y = reader.float(linearIndex: base + 2 * componentStride)
+        let z = reader.float(linearIndex: base + 3 * componentStride)
         return simd_quatf(ix: x, iy: y, iz: z, r: w)
     }
 }
 
 private struct MultiArrayAlpha {
     private var reader: MultiArrayReader
+    private let pointStride: Int
+    private let baseOffset: Int
 
     init(_ array: MLMultiArray) throws {
         let reader = try MultiArrayReader(array)
@@ -584,16 +662,25 @@ private struct MultiArrayAlpha {
             throw SharpLocalSplatGenerator.Error.unsupportedModelOutputs([array.description])
         }
         self.reader = reader
+        if reader.shape.count == 1 {
+            self.baseOffset = 0
+            self.pointStride = reader.strides[0]
+        } else {
+            // Accept either [1, N] or [N, 1]. Default to [N, 1] if ambiguous.
+            if reader.shape[0] == 1 {
+                // [1, N] -> index [0, pointIndex]
+                self.baseOffset = 0
+                self.pointStride = reader.strides[1]
+            } else {
+                // [N, 1] -> index [pointIndex, 0]
+                self.baseOffset = 0
+                self.pointStride = reader.strides[0]
+            }
+        }
     }
 
     func alpha(pointIndex: Int) -> Float {
-        if reader.shape.count == 2 {
-            if reader.shape[0] == 1 {
-                return reader.float(at: [0, pointIndex])
-            }
-            return reader.float(at: [pointIndex, 0])
-        }
-        return reader.float(at: [pointIndex])
+        reader.float(linearIndex: baseOffset + pointIndex * pointStride)
     }
 }
 
@@ -605,6 +692,17 @@ private func linearRGBToSRGB(_ linear: Float) -> Float {
 }
 
 private extension CGImage {
+    static func fromImageData(_ data: Data, maxPixelSize: Int) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+    }
+
     func resized(to size: CGSize) -> CGImage? {
         let width = Int(size.width)
         let height = Int(size.height)
@@ -663,6 +761,24 @@ private extension CGImage {
         context.interpolationQuality = .high
         context.draw(self, in: CGRect(x: 0, y: 0, width: width, height: height))
         return pixelBuffer
+    }
+}
+
+private extension SharpLocalSplatGenerator {
+    func logMemory(_ label: StaticString) {
+#if canImport(Mach)
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<natural_t>.size)
+        let kerr = withUnsafeMutablePointer(to: &info) { infoPtr in
+            infoPtr.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { intPtr in
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), intPtr, &count)
+            }
+        }
+        guard kerr == KERN_SUCCESS else { return }
+        Self.log.info("Memory \(label, privacy: .public): resident=\(UInt64(info.resident_size), privacy: .public) bytes, virtual=\(UInt64(info.virtual_size), privacy: .public) bytes")
+#else
+        _ = label
+#endif
     }
 }
 

@@ -311,6 +311,11 @@ actor SharpLocalSplatGenerator {
             return [ .all ]
             #else
             // Avoid .all by default on iOS/visionOS: it can trigger GPU paths and crash on some devices.
+            // Also avoid CPU+GPU on very low-memory devices, because model load may be killed by the OS.
+            let physicalMemory = ProcessInfo.processInfo.physicalMemory
+            if physicalMemory > 0 && physicalMemory < UInt64(6) * 1024 * 1024 * 1024 {
+                return [ .cpuAndNeuralEngine, .cpuOnly ]
+            }
             return [ .cpuAndNeuralEngine, .cpuOnly, .cpuAndGPU ]
             #endif
         }

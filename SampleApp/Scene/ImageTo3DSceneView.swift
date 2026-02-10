@@ -31,6 +31,42 @@ struct ImageTo3DSceneView: View {
 
     private let generator = SharpLocalSplatGenerator()
 
+    private var devicePhysicalMemoryBytes: UInt64? {
+#if os(iOS) || os(visionOS)
+        let value = ProcessInfo.processInfo.physicalMemory
+        return value > 0 ? value : nil
+#else
+        nil
+#endif
+    }
+
+    private var devicePhysicalMemoryGB: Double? {
+        guard let devicePhysicalMemoryBytes else { return nil }
+        return Double(devicePhysicalMemoryBytes) / (1024 * 1024 * 1024)
+    }
+
+    private var requiresHighMemoryDeviceForLocalGeneration: Bool {
+#if os(iOS) || os(visionOS)
+        true
+#else
+        false
+#endif
+    }
+
+    private var canSafelyRunLocalGeneration: Bool {
+#if os(iOS) || os(visionOS)
+        guard let bytes = devicePhysicalMemoryBytes else { return false }
+        // SHARP is known to be unstable on < 8GB devices (Apple Research SHARP docs / common reports).
+        return bytes >= UInt64(8) * 1024 * 1024 * 1024
+#else
+        true
+#endif
+    }
+
+#if DEBUG
+    @State private var forceEnableLocalGeneration = false
+#endif
+
     private enum OutputQuality: String, CaseIterable, Identifiable {
         case full
         case balanced
@@ -159,6 +195,21 @@ struct ImageTo3DSceneView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
+#if os(iOS) || os(visionOS)
+            if requiresHighMemoryDeviceForLocalGeneration && !canSafelyRunLocalGeneration {
+                let gbText = devicePhysicalMemoryGB.map { String(format: "%.1f", $0) } ?? "unknown"
+                Text("This device has ~\(gbText) GB RAM. Local SHARP generation often exceeds iOS memory limits on < 8 GB devices and may be killed by the OS. Recommended: generate the PLY on macOS and import it here to render.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                #if DEBUG
+                Toggle("Force Enable Local Generation (Debug Only)", isOn: $forceEnableLocalGeneration)
+                    .font(.footnote)
+                    .disabled(isGenerating)
+                #endif
+            }
+#endif
+
             Picker("Quality", selection: $outputQuality) {
                 ForEach(OutputQuality.allCases) { quality in
                     Text(quality.title).tag(quality)
@@ -188,13 +239,20 @@ struct ImageTo3DSceneView: View {
                 }
             }
             .buttonStyle(.bordered)
-            .disabled(!processLocally || isGenerating || !isInferenceSupported)
+            .disabled(!processLocally || isGenerating || !isInferenceSupported || !isLocalGenerationEnabled)
 
             if !isInferenceSupported {
                 Text("Local SHARP inference is not supported on visionOS Simulator. Run on device to generate PLY.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
+#if os(iOS) || os(visionOS)
+            if requiresHighMemoryDeviceForLocalGeneration && !canSafelyRunLocalGeneration && !isLocalGenerationEnabled {
+                Text("Local generation is disabled on this device to avoid OS termination. Use the macOS app to generate a PLY, then open it here.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+#endif
 
             if let generatedPLYURL {
                 Button {
@@ -407,6 +465,20 @@ struct ImageTo3DSceneView: View {
                 errorMessage = error.localizedDescription
             }
         }
+    }
+
+    private var isLocalGenerationEnabled: Bool {
+#if DEBUG
+        if requiresHighMemoryDeviceForLocalGeneration && !canSafelyRunLocalGeneration {
+            return forceEnableLocalGeneration
+        }
+        return true
+#else
+        if requiresHighMemoryDeviceForLocalGeneration && !canSafelyRunLocalGeneration {
+            return false
+        }
+        return true
+#endif
     }
 }
 

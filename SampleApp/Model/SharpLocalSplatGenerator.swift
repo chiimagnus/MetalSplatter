@@ -3,8 +3,11 @@ import CoreGraphics
 import Foundation
 import SplatIO
 import simd
+import os
 
 actor SharpLocalSplatGenerator {
+    private static let log = Logger(subsystem: "MetalSplatterSampleApp", category: "SharpLocalSplatGenerator")
+
     enum Error: LocalizedError {
         case unsupportedModelInputs([String])
         case unsupportedModelOutputs([String])
@@ -40,6 +43,10 @@ actor SharpLocalSplatGenerator {
     private var modelComputeUnits: MLComputeUnits?
 
     func unloadModel() {
+        if model != nil {
+            let units = modelComputeUnits
+            Self.log.info("Unloading Core ML model (computeUnits=\(String(describing: units), privacy: .public)).")
+        }
         model = nil
         modelComputeUnits = nil
     }
@@ -48,15 +55,20 @@ actor SharpLocalSplatGenerator {
                   disparityFactor: Float = 1.0,
                   progress: (@Sendable (Double) -> Void)? = nil) async throws -> GenerationResult {
 #if os(visionOS) && targetEnvironment(simulator)
+        Self.log.warning("Attempted to run inference on visionOS Simulator; not supported.")
         throw Error.unsupportedOnVisionOSSimulator
 #endif
 
+        Self.log.info("Starting generation. image=\(sourceImage.width)x\(sourceImage.height), disparityFactor=\(disparityFactor, privacy: .public)")
         let compiledURL = try await SharpModelResources.ensureCompiledModelAvailable(progress: { value in
             progress?(min(value * 0.2, 0.2))
         })
+        Self.log.info("Compiled model URL: \(compiledURL.path, privacy: .public)")
 
         let (model, io) = try await loadModelAndIO(compiledModelURL: compiledURL)
+        Self.log.info("Model IO resolved. imageInput=\(io.imageInputName, privacy: .public), disparityInput=\(io.disparityInputName ?? "(none)", privacy: .public)")
         let inputSize = inferInputSize(model: model, imageInputName: io.imageInputName) ?? CGSize(width: 1536, height: 1536)
+        Self.log.info("Using model input size: \(Int(inputSize.width))x\(Int(inputSize.height))")
 
         guard let resized = sourceImage.resized(to: inputSize) else {
             throw Error.unsupportedImage
@@ -70,11 +82,17 @@ actor SharpLocalSplatGenerator {
 
         progress?(0.25)
         let provider = try MLDictionaryFeatureProvider(dictionary: inputs)
+        let computeUnitCandidates = predictComputeUnitCandidates()
+        Self.log.info("Starting prediction (computeUnitsCandidates=\(String(describing: computeUnitCandidates), privacy: .public)).")
+        let predictionStart = Date()
         let output = try await predictWithFallback(compiledModelURL: compiledURL, provider: provider)
+        let predictionSeconds = Date().timeIntervalSince(predictionStart)
+        Self.log.info("Prediction finished in \(predictionSeconds, privacy: .public)s.")
         progress?(0.35)
 
         let tensors = try resolveOutputs(io: io, output: output)
         let pointCount = tensors.positions.pointCount
+        Self.log.info("Resolved outputs. pointCount=\(pointCount, privacy: .public)")
 
         // Release the model as early as possible to reduce steady-state memory use after inference.
         // Core ML may still retain internal caches, but this helps drop our strong reference.
@@ -84,6 +102,7 @@ actor SharpLocalSplatGenerator {
             .appendingPathComponent("sharp-\(UUID().uuidString)")
             .appendingPathExtension("ply")
 
+        Self.log.info("Writing PLY to: \(outURL.path, privacy: .public)")
         let writer = try SplatPLYSceneWriter(to: .file(outURL))
         try await writer.start(sphericalHarmonicDegree: 0, binary: true, pointCount: pointCount)
 
@@ -121,6 +140,11 @@ actor SharpLocalSplatGenerator {
         }
 
         try await writer.close()
+        if let fileSize = try? FileManager.default.attributesOfItem(atPath: outURL.path)[.size] as? NSNumber {
+            Self.log.info("PLY write complete. bytes=\(fileSize.intValue, privacy: .public)")
+        } else {
+            Self.log.info("PLY write complete.")
+        }
         return GenerationResult(plyURL: outURL, pointCount: pointCount)
     }
 
@@ -154,6 +178,7 @@ actor SharpLocalSplatGenerator {
         let config = MLModelConfiguration()
         config.computeUnits = computeUnits
 
+        Self.log.info("Loading model with computeUnits=\(String(describing: computeUnits), privacy: .public)")
         let model = try MLModel(contentsOf: compiledModelURL, configuration: config)
         self.model = model
         self.modelComputeUnits = computeUnits
@@ -161,32 +186,35 @@ actor SharpLocalSplatGenerator {
     }
 
     private func predictWithFallback(compiledModelURL: URL, provider: MLDictionaryFeatureProvider) async throws -> MLFeatureProvider {
-        let computeUnitCandidates: [MLComputeUnits] = {
-#if targetEnvironment(simulator)
-            [ .cpuOnly ]
-#else
-            #if os(iOS)
-            [ .all, .cpuOnly ]
-            #elseif os(macOS)
-            [ .all ]
-            #else
-            [ .cpuAndNeuralEngine, .all, .cpuOnly ]
-            #endif
-#endif
-        }()
-
+        let computeUnitCandidates = predictComputeUnitCandidates()
         var lastError: Swift.Error?
         for units in computeUnitCandidates {
             do {
+                Self.log.info("Attempting prediction with computeUnits=\(String(describing: units), privacy: .public)")
                 let model = try loadModel(compiledModelURL: compiledModelURL, computeUnits: units)
                 return try await predictSync(model: model, provider: provider)
             } catch {
                 lastError = error
+                Self.log.error("Prediction failed with computeUnits=\(String(describing: units), privacy: .public): \(error.localizedDescription, privacy: .public)")
                 unloadModel()
             }
         }
 
         throw Error.predictionFailed(lastError?.localizedDescription ?? "Core ML prediction failed.")
+    }
+
+    private func predictComputeUnitCandidates() -> [MLComputeUnits] {
+#if targetEnvironment(simulator)
+        [ .cpuOnly ]
+#else
+        #if os(iOS)
+        [ .all, .cpuOnly ]
+        #elseif os(macOS)
+        [ .all ]
+        #else
+        [ .cpuAndNeuralEngine, .all, .cpuOnly ]
+        #endif
+#endif
     }
 }
 

@@ -1,5 +1,8 @@
 #if os(iOS) || os(macOS) || os(visionOS)
 
+#if os(macOS)
+import AppKit
+#endif
 import PhotosUI
 import SwiftUI
 import ImageIO
@@ -18,6 +21,7 @@ struct ImageTo3DSceneView: View {
     @State private var generationProgress: Double = 0
 
     @State private var generatedPLYURL: URL?
+    @State private var generatedPointCount: Int?
     @State private var exportPLYURL: URL?
     @State private var isExportingPLY = false
 
@@ -85,11 +89,24 @@ struct ImageTo3DSceneView: View {
                 } label: {
                     HStack {
                         Image(systemName: "play.circle")
-                        Text("Open Generated PLY")
+                        Text("Render Generated PLY")
                     }
                 }
                 .buttonStyle(.bordered)
                 .disabled(isGenerating)
+
+#if os(macOS)
+                Button {
+                    NSWorkspace.shared.activateFileViewerSelecting([generatedPLYURL])
+                } label: {
+                    HStack {
+                        Image(systemName: "magnifyingglass")
+                        Text("Reveal in Finder")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(isGenerating)
+#endif
 
                 Button {
                     Task { await exportPLY(generatedPLYURL) }
@@ -112,6 +129,12 @@ struct ImageTo3DSceneView: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(isGenerating)
+
+                if let generatedPointCount {
+                    Text("Generated \(generatedPointCount) points.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             if isGenerating {
@@ -196,6 +219,7 @@ struct ImageTo3DSceneView: View {
             generationProgress = 0
             errorMessage = nil
             generatedPLYURL = nil
+            generatedPointCount = nil
         }
 
         do {
@@ -212,6 +236,7 @@ struct ImageTo3DSceneView: View {
 
             await MainActor.run {
                 generatedPLYURL = result.plyURL
+                generatedPointCount = result.pointCount
             }
         } catch {
             await MainActor.run {

@@ -67,6 +67,17 @@ struct ImageTo3DSceneView: View {
 
             if let generatedPLYURL {
                 Button {
+                    openModel(.gaussianSplat(generatedPLYURL))
+                } label: {
+                    HStack {
+                        Image(systemName: "play.circle")
+                        Text("Open Generated PLY")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(isGenerating)
+
+                Button {
                     Task { await exportPLY(generatedPLYURL) }
                 } label: {
                     HStack {
@@ -176,7 +187,6 @@ struct ImageTo3DSceneView: View {
 
             await MainActor.run {
                 generatedPLYURL = result.plyURL
-                openModel(.gaussianSplat(result.plyURL))
             }
         } catch {
             await MainActor.run {

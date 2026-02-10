@@ -1,0 +1,123 @@
+@preconcurrency import CoreML
+@preconcurrency import Foundation
+
+enum SharpModelResources {
+    enum Error: LocalizedError {
+        case missingBundledModelResource(modelName: String)
+        case cannotCreateCacheDirectory(URL)
+
+        var errorDescription: String? {
+            switch self {
+            case .missingBundledModelResource(let modelName):
+                "Could not find Core ML model resource \"\(modelName)\" in the app bundle."
+            case .cannotCreateCacheDirectory(let url):
+                "Could not create model cache directory at: \(url.path)"
+            }
+        }
+    }
+
+    static let modelName = "sharp"
+    static let odrTags: Set<String> = [ "sharp-coreml" ]
+
+    static func cachedCompiledModelURL() throws -> URL {
+        let base = try FileManager.default.url(for: .applicationSupportDirectory,
+                                               in: .userDomainMask,
+                                               appropriateFor: nil,
+                                               create: true)
+        let cacheDir = base.appendingPathComponent("SharpModel", isDirectory: true)
+
+        var isDir: ObjCBool = false
+        if !FileManager.default.fileExists(atPath: cacheDir.path, isDirectory: &isDir) {
+            do {
+                try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+            } catch {
+                throw Error.cannotCreateCacheDirectory(cacheDir)
+            }
+        }
+
+        return cacheDir.appendingPathComponent("\(modelName).mlmodelc", isDirectory: true)
+    }
+
+    static func ensureCompiledModelAvailable(progress: @Sendable @escaping (Double) -> Void) async throws -> URL {
+        let compiledURL = try cachedCompiledModelURL()
+        if FileManager.default.fileExists(atPath: compiledURL.path) {
+            progress(1)
+            return compiledURL
+        }
+
+        do {
+            progress(0)
+#if os(macOS)
+            // NSBundleResourceRequest (ODR) is not available on macOS.
+            // On macOS, expect the model to be present in the app bundle.
+            progress(0.2)
+            let sourceURL = try findModelResourceURL()
+            let compiledSourceURL = try compileIfNeeded(sourceURL)
+            progress(0.85)
+            try replaceItem(at: compiledURL, with: compiledSourceURL)
+            progress(1)
+            return compiledURL
+#else
+            let request = NSBundleResourceRequest(tags: odrTags)
+            request.loadingPriority = NSBundleResourceRequestLoadingPriorityUrgent
+            defer { request.endAccessingResources() }
+
+            try await beginAccessingResources(request)
+            progress(0.6)
+            let sourceURL = try findModelResourceURL()
+            let compiledSourceURL = try compileIfNeeded(sourceURL)
+            progress(0.85)
+            try replaceItem(at: compiledURL, with: compiledSourceURL)
+            progress(1)
+            return compiledURL
+#endif
+        } catch {
+            throw error
+        }
+    }
+
+#if !os(macOS)
+    private static func beginAccessingResources(_ request: NSBundleResourceRequest) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Swift.Error>) in
+            request.beginAccessingResources { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: ())
+                }
+            }
+        }
+    }
+#endif
+
+    private static func findModelResourceURL(bundle: Bundle = .main) throws -> URL {
+        if let url = bundle.url(forResource: modelName, withExtension: "mlmodelc") {
+            return url
+        }
+        if let url = bundle.url(forResource: modelName, withExtension: "mlpackage") {
+            return url
+        }
+
+        let candidates = (bundle.urls(forResourcesWithExtension: "mlmodelc", subdirectory: nil) ?? []) +
+            (bundle.urls(forResourcesWithExtension: "mlpackage", subdirectory: nil) ?? [])
+        if let fallback = candidates.first(where: { $0.deletingPathExtension().lastPathComponent == modelName }) {
+            return fallback
+        }
+
+        throw Error.missingBundledModelResource(modelName: modelName)
+    }
+
+    private static func compileIfNeeded(_ modelURL: URL) throws -> URL {
+        if modelURL.pathExtension == "mlmodelc" {
+            return modelURL
+        }
+        return try MLModel.compileModel(at: modelURL)
+    }
+
+    private static func replaceItem(at destinationURL: URL, with sourceURL: URL) throws {
+        if FileManager.default.fileExists(atPath: destinationURL.path) {
+            try FileManager.default.removeItem(at: destinationURL)
+        }
+        try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+    }
+}

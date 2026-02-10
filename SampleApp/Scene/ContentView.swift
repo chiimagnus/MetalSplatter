@@ -54,6 +54,15 @@ struct ContentView: View {
 
             Spacer()
 
+#if os(visionOS)
+            ImageTo3DSceneView { modelIdentifier in
+                openWindow(value: modelIdentifier)
+            }
+            .padding(.horizontal)
+
+            Spacer()
+#endif
+
             Button("Read Scene File") {
                 isPickingFile = true
             }

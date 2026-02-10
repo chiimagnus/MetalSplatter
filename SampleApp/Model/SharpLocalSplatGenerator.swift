@@ -251,6 +251,9 @@ actor SharpLocalSplatGenerator {
             }
         }
 
+        if let lastError, let friendly = Self.friendlyCoreMLErrorMessage(lastError) {
+            throw Error.predictionFailed(friendly)
+        }
         throw Error.predictionFailed(lastError?.localizedDescription ?? "Core ML prediction failed.")
     }
 
@@ -311,6 +314,21 @@ actor SharpLocalSplatGenerator {
         guard pointCount > 0 else { return 0 }
         let stride = max(1, stride)
         return (pointCount + stride - 1) / stride
+    }
+
+    private static func friendlyCoreMLErrorMessage(_ error: Swift.Error) -> String? {
+        let text = String(describing: error)
+
+        if text.localizedCaseInsensitiveContains("No space left on device") {
+            return "Core ML failed due to insufficient device storage while preparing the execution plan. Free up storage (recommend ≥ 10 GB), or tap “Delete Downloaded Models” and try again."
+        }
+
+        if text.localizedCaseInsensitiveContains("Memory allocation error") ||
+            text.localizedCaseInsensitiveContains("ENOMEM") {
+            return "Core ML ran out of memory while preparing the execution plan. This SHARP model may not run on this device. Try switching Compute to CPU+NE or CPU+GPU, or generate the PLY on macOS and import it for rendering."
+        }
+
+        return nil
     }
 }
 

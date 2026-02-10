@@ -5,19 +5,36 @@ enum SharpModelResources {
     enum Error: LocalizedError {
         case missingBundledModelResource(modelName: String)
         case cannotCreateCacheDirectory(URL)
+        case insufficientDiskSpace(requiredBytes: Int64, availableBytes: Int64)
 
         var errorDescription: String? {
             switch self {
             case .missingBundledModelResource(let modelName):
-                "Could not find Core ML model resource \"\(modelName)\" in the app bundle."
+                return "Could not find Core ML model resource \"\(modelName)\" in the app bundle."
             case .cannotCreateCacheDirectory(let url):
-                "Could not create model cache directory at: \(url.path)"
+                return "Could not create model cache directory at: \(url.path)"
+            case let .insufficientDiskSpace(requiredBytes, availableBytes):
+                let requiredGB = Double(requiredBytes) / (1024 * 1024 * 1024)
+                let availableGB = Double(availableBytes) / (1024 * 1024 * 1024)
+                return String(format: "Not enough free device storage for the SHARP model (need ~%.1f GB free, only ~%.1f GB available). Free up storage and try again.", requiredGB, availableGB)
             }
         }
     }
 
     static let modelName = "sharp"
     static let odrTags: Set<String> = [ "sharp-coreml" ]
+
+    static func cachedCompiledModelExists() -> Bool {
+        (try? cachedCompiledModelURL())
+            .map { FileManager.default.fileExists(atPath: $0.path) } ?? false
+    }
+
+    static func deleteCachedCompiledModel() throws {
+        let url = try cachedCompiledModelURL()
+        if FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
+        }
+    }
 
     static func cachedCompiledModelURL() throws -> URL {
         let base = try FileManager.default.url(for: .applicationSupportDirectory,
@@ -36,6 +53,22 @@ enum SharpModelResources {
         }
 
         return cacheDir.appendingPathComponent("\(modelName).mlmodelc", isDirectory: true)
+    }
+
+    static func availableDiskBytes() -> Int64? {
+        let url = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+        let values = try? url.resourceValues(forKeys: [
+            .volumeAvailableCapacityForImportantUsageKey,
+            .volumeAvailableCapacityKey,
+        ])
+
+        if let important = values?.volumeAvailableCapacityForImportantUsage {
+            return important
+        }
+        if let capacity = values?.volumeAvailableCapacity {
+            return Int64(capacity)
+        }
+        return nil
     }
 
     static func ensureCompiledModelAvailable(progress: @Sendable @escaping (Double) -> Void) async throws -> URL {
@@ -58,6 +91,15 @@ enum SharpModelResources {
             progress(1)
             return compiledURL
 #else
+            if let available = availableDiskBytes() {
+                // ODR download (~1.3GB) + cache copy + Core ML plan caches can require multiple GB.
+                // Be conservative so we fail early with a clear error message.
+                let required: Int64 = 6 * 1024 * 1024 * 1024
+                if available < required {
+                    throw Error.insufficientDiskSpace(requiredBytes: required, availableBytes: available)
+                }
+            }
+
             let request = NSBundleResourceRequest(tags: odrTags)
             request.loadingPriority = NSBundleResourceRequestLoadingPriorityUrgent
             defer { request.endAccessingResources() }

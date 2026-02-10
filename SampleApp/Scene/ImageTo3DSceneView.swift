@@ -132,6 +132,19 @@ struct ImageTo3DSceneView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(!processLocally || isDownloadingModel || hasLocalModel || isGenerating)
 
+                if hasLocalModel {
+                    Button(role: .destructive) {
+                        Task { await deleteCachedModel() }
+                    } label: {
+                        HStack {
+                            Image(systemName: "trash")
+                            Text("Delete Downloaded Models")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isGenerating || isDownloadingModel)
+                }
+
                 if isDownloadingModel {
                     ProgressView(value: modelDownloadProgress) {
                         Text("Downloading models…")
@@ -282,12 +295,7 @@ struct ImageTo3DSceneView: View {
 
     @MainActor
     private func refreshLocalModelState() {
-        do {
-            let url = try SharpModelResources.cachedCompiledModelURL()
-            hasLocalModel = FileManager.default.fileExists(atPath: url.path)
-        } catch {
-            hasLocalModel = false
-        }
+        hasLocalModel = SharpModelResources.cachedCompiledModelExists()
     }
 
     private func downloadModels() async {
@@ -314,6 +322,23 @@ struct ImageTo3DSceneView: View {
 
         await MainActor.run {
             isDownloadingModel = false
+        }
+    }
+
+    private func deleteCachedModel() async {
+        await MainActor.run {
+            errorMessage = nil
+        }
+
+        do {
+            try SharpModelResources.deleteCachedCompiledModel()
+            await MainActor.run {
+                refreshLocalModelState()
+            }
+        } catch {
+            await MainActor.run {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 

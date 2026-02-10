@@ -32,7 +32,7 @@
 		61C0A0232C5A0C6700A1B2C3 /* AxisGizmoShaders.metal in Sources */ = {isa = PBXBuildFile; fileRef = 61C0A0222C5A0C6700A1B2C3 /* AxisGizmoShaders.metal */; };
 		61C9F0E82D0C1B7B00A82A6C /* SharpModelResources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61C9F0E62D0C1B7B00A82A6C /* SharpModelResources.swift */; };
 		61C9F0EA2D0C1B7B00A82A6C /* SharpLocalSplatGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61C9F0E72D0C1B7B00A82A6C /* SharpLocalSplatGenerator.swift */; };
-		D8B5ED0F2F3B5AEE0073060D /* sharp.mlpackage in Sources */ = {isa = PBXBuildFile; fileRef = D8B5ED0E2F3B5AEE0073060D /* sharp.mlpackage */; };
+		D8B5ED0F2F3B5AEE0073060D /* sharp.mlpackage in Resources */ = {isa = PBXBuildFile; fileRef = D8B5ED0E2F3B5AEE0073060D /* sharp.mlpackage */; settings = {ASSET_TAGS = (sharp-coreml, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -223,6 +223,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				61791DCF2B41544300302B57 /* Assets.xcassets in Resources */,
+				D8B5ED0F2F3B5AEE0073060D /* sharp.mlpackage in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -246,7 +247,6 @@
 				61C0A0232C5A0C6700A1B2C3 /* AxisGizmoShaders.metal in Sources */,
 				61791E102B41688000302B57 /* MetalKitSceneRenderer.swift in Sources */,
 				61791DE02B4154FB00302B57 /* SplatRenderer+ModelRenderer.swift in Sources */,
-				D8B5ED0F2F3B5AEE0073060D /* sharp.mlpackage in Sources */,
 				61791DE82B4154FB00302B57 /* ModelRenderer.swift in Sources */,
 				61B7F1D32C0F123400C0FFEE /* ViewerInteractionStore.swift in Sources */,
 				61C9F0E82D0C1B7B00A82A6C /* SharpModelResources.swift in Sources */,
@@ -273,6 +273,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = RDQHYSDFFG;
+				ENABLE_ON_DEMAND_RESOURCES = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "MetalSplatter Sample";
@@ -321,6 +322,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = RDQHYSDFFG;
+				ENABLE_ON_DEMAND_RESOURCES = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "MetalSplatter Sample";

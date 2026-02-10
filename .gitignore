@@ -4,4 +4,4 @@ DerivedData/
 .swiftpm
 .build
 Package.resolved
-
+SampleApp/sharp.mlpackage

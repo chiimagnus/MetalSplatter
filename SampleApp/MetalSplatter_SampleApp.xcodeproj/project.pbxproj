@@ -9,9 +9,9 @@
 /* Begin PBXBuildFile section */
 		610347D92B46864500693CE3 /* SampleApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61791DF62B41551F00302B57 /* SampleApp.swift */; };
 		610347DA2B46874500693CE3 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61791DF72B41551F00302B57 /* ContentView.swift */; };
-		610D4AB92D0C1A8B00B4C2AA /* ImageTo3DSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 610D4AB82D0C1A8B00B4C2AA /* ImageTo3DSceneView.swift */; };
 		610347DB2B46875700693CE3 /* VisionSceneRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61791E0C2B41683500302B57 /* VisionSceneRenderer.swift */; };
 		610347DC2B46875A00693CE3 /* ContentStageConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 610347D82B46861E00693CE3 /* ContentStageConfiguration.swift */; };
+		610D4AB92D0C1A8B00B4C2AA /* ImageTo3DSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 610D4AB82D0C1A8B00B4C2AA /* ImageTo3DSceneView.swift */; };
 		61791DCF2B41544300302B57 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 61791DC32B41514300302B57 /* Assets.xcassets */; };
 		61791DE02B4154FB00302B57 /* SplatRenderer+ModelRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61791DDA2B4154FB00302B57 /* SplatRenderer+ModelRenderer.swift */; };
 		61791DE22B4154FB00302B57 /* ModelIdentifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61791DDB2B4154FB00302B57 /* ModelIdentifier.swift */; };
@@ -27,11 +27,12 @@
 		617E50CB2B314C4800F99766 /* SplatIO in Frameworks */ = {isa = PBXBuildFile; productRef = 617E50CA2B314C4800F99766 /* SplatIO */; };
 		61B7F1D32C0F123400C0FFEE /* ViewerInteractionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61B7F1D22C0F123400C0FFEE /* ViewerInteractionStore.swift */; };
 		61B7F1D52C0F124000C0FFEE /* ModelViewerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61B7F1D42C0F124000C0FFEE /* ModelViewerView.swift */; };
-		61C9F0E82D0C1B7B00A82A6C /* SharpModelResources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61C9F0E62D0C1B7B00A82A6C /* SharpModelResources.swift */; };
-		61C9F0EA2D0C1B7B00A82A6C /* SharpLocalSplatGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61C9F0E72D0C1B7B00A82A6C /* SharpLocalSplatGenerator.swift */; };
 		61C0A0122C5A0B0E00A1B2C3 /* SplatPLYMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61C0A0102C5A0B0E00A1B2C3 /* SplatPLYMetadata.swift */; };
 		61C0A0212C5A0C5C00A1B2C3 /* AxisGizmoRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61C0A0202C5A0C5C00A1B2C3 /* AxisGizmoRenderer.swift */; };
 		61C0A0232C5A0C6700A1B2C3 /* AxisGizmoShaders.metal in Sources */ = {isa = PBXBuildFile; fileRef = 61C0A0222C5A0C6700A1B2C3 /* AxisGizmoShaders.metal */; };
+		61C9F0E82D0C1B7B00A82A6C /* SharpModelResources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61C9F0E62D0C1B7B00A82A6C /* SharpModelResources.swift */; };
+		61C9F0EA2D0C1B7B00A82A6C /* SharpLocalSplatGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61C9F0E72D0C1B7B00A82A6C /* SharpLocalSplatGenerator.swift */; };
+		D8B5ED0F2F3B5AEE0073060D /* sharp.mlpackage in Sources */ = {isa = PBXBuildFile; fileRef = D8B5ED0E2F3B5AEE0073060D /* sharp.mlpackage */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -53,11 +54,12 @@
 		617E50B02B314BE200F99766 /* MetalSplatter SampleApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "MetalSplatter SampleApp.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		61B7F1D22C0F123400C0FFEE /* ViewerInteractionStore.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ViewerInteractionStore.swift; sourceTree = "<group>"; };
 		61B7F1D42C0F124000C0FFEE /* ModelViewerView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ModelViewerView.swift; sourceTree = "<group>"; };
-		61C9F0E62D0C1B7B00A82A6C /* SharpModelResources.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharpModelResources.swift; sourceTree = "<group>"; };
-		61C9F0E72D0C1B7B00A82A6C /* SharpLocalSplatGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharpLocalSplatGenerator.swift; sourceTree = "<group>"; };
 		61C0A0102C5A0B0E00A1B2C3 /* SplatPLYMetadata.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SplatPLYMetadata.swift; sourceTree = "<group>"; };
 		61C0A0202C5A0C5C00A1B2C3 /* AxisGizmoRenderer.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AxisGizmoRenderer.swift; sourceTree = "<group>"; };
 		61C0A0222C5A0C6700A1B2C3 /* AxisGizmoShaders.metal */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.metal; path = AxisGizmoShaders.metal; sourceTree = "<group>"; };
+		61C9F0E62D0C1B7B00A82A6C /* SharpModelResources.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharpModelResources.swift; sourceTree = "<group>"; };
+		61C9F0E72D0C1B7B00A82A6C /* SharpLocalSplatGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharpLocalSplatGenerator.swift; sourceTree = "<group>"; };
+		D8B5ED0E2F3B5AEE0073060D /* sharp.mlpackage */ = {isa = PBXFileReference; lastKnownFileType = folder.mlpackage; path = sharp.mlpackage; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -139,6 +141,7 @@
 				610347DF2B4689DB00693CE3 /* Model */,
 				61791DF82B41551F00302B57 /* Info.plist */,
 				61791DC32B41514300302B57 /* Assets.xcassets */,
+				D8B5ED0E2F3B5AEE0073060D /* sharp.mlpackage */,
 				61E3FD832AE5CB0200032652 /* Products */,
 				619832682AF0BC390022500D /* Frameworks */,
 			);
@@ -243,6 +246,7 @@
 				61C0A0232C5A0C6700A1B2C3 /* AxisGizmoShaders.metal in Sources */,
 				61791E102B41688000302B57 /* MetalKitSceneRenderer.swift in Sources */,
 				61791DE02B4154FB00302B57 /* SplatRenderer+ModelRenderer.swift in Sources */,
+				D8B5ED0F2F3B5AEE0073060D /* sharp.mlpackage in Sources */,
 				61791DE82B4154FB00302B57 /* ModelRenderer.swift in Sources */,
 				61B7F1D32C0F123400C0FFEE /* ViewerInteractionStore.swift in Sources */,
 				61C9F0E82D0C1B7B00A82A6C /* SharpModelResources.swift in Sources */,

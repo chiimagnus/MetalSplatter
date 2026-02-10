@@ -11,6 +11,7 @@ actor SharpLocalSplatGenerator {
         case unsupportedImage
         case unsupportedMultiArrayDataType(MLMultiArrayDataType)
         case unsupportedOnVisionOSSimulator
+        case predictionFailed(String)
 
         var errorDescription: String? {
             switch self {
@@ -24,6 +25,8 @@ actor SharpLocalSplatGenerator {
                 "Unsupported MLMultiArray data type: \(type)"
             case .unsupportedOnVisionOSSimulator:
                 "SHARP Core ML inference is not supported on visionOS Simulator. Please run on a real device."
+            case .predictionFailed(let message):
+                message
             }
         }
     }
@@ -34,9 +37,11 @@ actor SharpLocalSplatGenerator {
     }
 
     private var model: MLModel?
+    private var modelComputeUnits: MLComputeUnits?
 
     func unloadModel() {
         model = nil
+        modelComputeUnits = nil
     }
 
     func generate(from sourceImage: CGImage,
@@ -50,8 +55,7 @@ actor SharpLocalSplatGenerator {
             progress?(min(value * 0.2, 0.2))
         })
 
-        let model = try await loadModelIfNeeded(compiledModelURL: compiledURL)
-        let io = try resolveIO(model: model)
+        let (model, io) = try await loadModelAndIO(compiledModelURL: compiledURL)
         let inputSize = inferInputSize(model: model, imageInputName: io.imageInputName) ?? CGSize(width: 1536, height: 1536)
 
         guard let resized = sourceImage.resized(to: inputSize) else {
@@ -66,7 +70,7 @@ actor SharpLocalSplatGenerator {
 
         progress?(0.25)
         let provider = try MLDictionaryFeatureProvider(dictionary: inputs)
-        let output = try await model.prediction(from: provider)
+        let output = try await predictWithFallback(compiledModelURL: compiledURL, provider: provider)
         progress?(0.35)
 
         let tensors = try resolveOutputs(io: io, output: output)
@@ -120,27 +124,89 @@ actor SharpLocalSplatGenerator {
         return GenerationResult(plyURL: outURL, pointCount: pointCount)
     }
 
-    private func loadModelIfNeeded(compiledModelURL: URL) async throws -> MLModel {
-        if let model {
+    private func loadModelAndIO(compiledModelURL: URL) async throws -> (MLModel, SharpModelIO) {
+        let preferredUnits: MLComputeUnits
+
+#if targetEnvironment(simulator)
+        preferredUnits = .cpuOnly
+#else
+        #if os(macOS)
+        // Match upstream (sharp.swift).
+        preferredUnits = .all
+        #elseif os(iOS)
+        // Start with the most flexible option; we'll fall back if needed.
+        preferredUnits = .all
+        #else
+        preferredUnits = .cpuAndNeuralEngine
+        #endif
+#endif
+
+        let model = try loadModel(compiledModelURL: compiledModelURL, computeUnits: preferredUnits)
+        let io = try resolveIO(model: model)
+        return (model, io)
+    }
+
+    private func loadModel(compiledModelURL: URL, computeUnits: MLComputeUnits) throws -> MLModel {
+        if let model, modelComputeUnits == computeUnits {
             return model
         }
 
         let config = MLModelConfiguration()
-#if targetEnvironment(simulator)
-        // visionOS Simulator may not support the GPU/MPSGraph backend required by this model.
-        config.computeUnits = .cpuOnly
-#else
-        #if os(macOS)
-        // Match the upstream script and let Core ML pick the best backend on Mac.
-        config.computeUnits = .all
-        #else
-        // Prefer NE on iPhone / Vision Pro when available.
-        config.computeUnits = .cpuAndNeuralEngine
-        #endif
-#endif
+        config.computeUnits = computeUnits
+
         let model = try MLModel(contentsOf: compiledModelURL, configuration: config)
         self.model = model
+        self.modelComputeUnits = computeUnits
         return model
+    }
+
+    private func predictWithFallback(compiledModelURL: URL, provider: MLDictionaryFeatureProvider) async throws -> MLFeatureProvider {
+        let computeUnitCandidates: [MLComputeUnits] = {
+#if targetEnvironment(simulator)
+            [ .cpuOnly ]
+#else
+            #if os(iOS)
+            [ .all, .cpuOnly ]
+            #elseif os(macOS)
+            [ .all ]
+            #else
+            [ .cpuAndNeuralEngine, .all, .cpuOnly ]
+            #endif
+#endif
+        }()
+
+        var lastError: Swift.Error?
+        for units in computeUnitCandidates {
+            do {
+                let model = try loadModel(compiledModelURL: compiledModelURL, computeUnits: units)
+                return try await predictSync(model: model, provider: provider)
+            } catch {
+                lastError = error
+                unloadModel()
+            }
+        }
+
+        throw Error.predictionFailed(lastError?.localizedDescription ?? "Core ML prediction failed.")
+    }
+}
+
+private struct UncheckedSendableBox<T>: @unchecked Sendable {
+    var value: T
+}
+
+private func predictSync(model: MLModel, provider: MLDictionaryFeatureProvider) async throws -> MLFeatureProvider {
+    let modelBox = UncheckedSendableBox(value: model)
+    let providerBox = UncheckedSendableBox(value: provider)
+
+    return try await withCheckedThrowingContinuation { continuation in
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let output = try modelBox.value.prediction(from: providerBox.value)
+                continuation.resume(returning: output)
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
     }
 }
 

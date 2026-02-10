@@ -135,7 +135,7 @@ actor SharpLocalSplatGenerator {
         progress?(0.25)
         let provider = try MLDictionaryFeatureProvider(dictionary: inputs)
         let computeUnitCandidates = predictComputeUnitCandidates(preference: computePreference)
-        Self.log.info("Starting prediction (computeUnitsCandidates=\(String(describing: computeUnitCandidates), privacy: .public)).")
+        Self.log.info("Starting prediction (computeUnitsCandidates=\(computeUnitCandidates.map(Self.computeUnitsDisplayName).joined(separator: ", "), privacy: .public)).")
         let predictionStart = Date()
         let output = try await predictWithFallback(compiledModelURL: compiledURL,
                                                    provider: provider,
@@ -273,15 +273,32 @@ actor SharpLocalSplatGenerator {
         case .cpuAndNeuralEngine:
             return [ .cpuAndNeuralEngine, .cpuOnly ]
         case .all:
-            return [ .all, .cpuAndNeuralEngine, .cpuOnly ]
+            #if os(macOS)
+            return [ .all ]
+            #else
+            // .all has been observed to crash on some low-memory iOS devices during model load.
+            // Keep it last so we only try it if safer options fail.
+            return [ .cpuAndNeuralEngine, .cpuOnly, .cpuAndGPU, .all ]
+            #endif
         case .auto:
             #if os(macOS)
             return [ .all ]
             #else
-            return [ .cpuAndNeuralEngine, .all, .cpuOnly ]
+            // Avoid .all by default on iOS/visionOS: it can trigger GPU paths and crash on some devices.
+            return [ .cpuAndNeuralEngine, .cpuOnly, .cpuAndGPU ]
             #endif
         }
 #endif
+    }
+
+    private static func computeUnitsDisplayName(_ units: MLComputeUnits) -> String {
+        switch units {
+        case .cpuOnly: "CPU"
+        case .cpuAndGPU: "CPU+GPU"
+        case .all: "ALL"
+        case .cpuAndNeuralEngine: "CPU+NE"
+        @unknown default: "UNKNOWN(\(units.rawValue))"
+        }
     }
 
     private static func outputStride(pointCount: Int, maxOutputPoints: Int?) -> Int {

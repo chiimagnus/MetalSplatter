@@ -249,6 +249,9 @@ struct ImageTo3DSceneView: View {
             refreshLocalModelState()
             if !didInitializeQuality {
                 outputQuality = (recommendedMaxOutputPoints == nil) ? .full : .balanced
+                if recommendedMaxOutputPoints != nil {
+                    computeMode = .cpuAndNeuralEngine
+                }
                 didInitializeQuality = true
             }
         }

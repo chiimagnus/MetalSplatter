@@ -10,6 +10,7 @@ actor SharpLocalSplatGenerator {
         case unsupportedModelOutputs([String])
         case unsupportedImage
         case unsupportedMultiArrayDataType(MLMultiArrayDataType)
+        case unsupportedOnVisionOSSimulator
 
         var errorDescription: String? {
             switch self {
@@ -21,6 +22,8 @@ actor SharpLocalSplatGenerator {
                 "Unsupported image."
             case .unsupportedMultiArrayDataType(let type):
                 "Unsupported MLMultiArray data type: \(type)"
+            case .unsupportedOnVisionOSSimulator:
+                "SHARP Core ML inference is not supported on visionOS Simulator. Please run on a real device."
             }
         }
     }
@@ -35,6 +38,10 @@ actor SharpLocalSplatGenerator {
     func generate(from sourceImage: CGImage,
                   disparityFactor: Float = 1.0,
                   progress: (@Sendable (Double) -> Void)? = nil) async throws -> GenerationResult {
+#if os(visionOS) && targetEnvironment(simulator)
+        throw Error.unsupportedOnVisionOSSimulator
+#endif
+
         let compiledURL = try await SharpModelResources.ensureCompiledModelAvailable(progress: { value in
             progress?(min(value * 0.2, 0.2))
         })
@@ -111,7 +118,13 @@ actor SharpLocalSplatGenerator {
         }
 
         let config = MLModelConfiguration()
-        config.computeUnits = .all
+#if targetEnvironment(simulator)
+        // visionOS Simulator may not support the GPU/MPSGraph backend required by this model.
+        config.computeUnits = .cpuOnly
+#else
+        // Prefer NE on device when available.
+        config.computeUnits = .cpuAndNeuralEngine
+#endif
         let model = try MLModel(contentsOf: compiledModelURL, configuration: config)
         self.model = model
         return model

@@ -25,6 +25,14 @@ struct ImageTo3DSceneView: View {
 
     private let generator = SharpLocalSplatGenerator()
 
+    private var isSimulator: Bool {
+#if targetEnvironment(simulator)
+        true
+#else
+        false
+#endif
+    }
+
     var body: some View {
         VStack(spacing: 16) {
             Text("Image to 3D Scene")
@@ -56,6 +64,12 @@ struct ImageTo3DSceneView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
+            if isSimulator {
+                Text("Local SHARP inference is not supported on visionOS Simulator. Run on device to generate PLY.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
             PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
                 HStack {
                     Image(systemName: "photo.on.rectangle")
@@ -63,7 +77,7 @@ struct ImageTo3DSceneView: View {
                 }
             }
             .buttonStyle(.bordered)
-            .disabled(!processLocally || isGenerating)
+            .disabled(!processLocally || isGenerating || isSimulator)
 
             if let generatedPLYURL {
                 Button {

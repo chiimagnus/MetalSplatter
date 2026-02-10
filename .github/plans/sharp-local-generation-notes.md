@@ -16,7 +16,11 @@
 - `maxOutputPoints` / “降低输出点数”只影响 **写 PLY/渲染**，对 **CoreML 推理阶段峰值**帮助有限，因此不能作为“低内存设备可跑”的根本解法。
 
 2) **visionOS Simulator 不支持/不稳定**
-- 观测到 Espresso / MPSGraph backend 的兼容性错误与内存爆炸；应当直接禁用并提示“请真机运行”。
+- 观测到 Espresso / MPSGraph backend 的兼容性错误与内存爆炸；**即使强制 `cpuOnly` 也可能无法加载/执行**。
+- 结论：**不要把 visionOS Simulator 当作 CoreML 推理可用环境**。推荐将其定位为：
+  - UI / 交互 / 渲染（打开 PLY、相机控制、手势、性能）验证；
+  - 推理仅在真机或 macOS/云端完成。
+- 在 App 体验上应当 **显式禁用** 并提示“请真机运行/使用 macOS 生成 PLY”。
 
 3) **macOS 可作为可用闭环**
 - macOS 上模型可加载、推理并生成大 PLY；iOS 端建议先以“导入 PLY → 渲染查看”为主路径。
@@ -39,6 +43,16 @@
 ### 1) “能编译/能跑 Simulator” ≠ “能跑真机”
 - CoreML 后端、内存上限、Metal/BNNS/MPSGraph 支持情况在真机与 Simulator 差异很大。
 - 对 App Store 上线场景：必须把“真机低端/中端设备”作为第一优先级验证对象。
+
+### 1.1) visionOS Simulator 的特殊教训：推理不可依赖
+- Simulator 不等同于真机硬件能力集合（尤其是 Neural Engine / GPU 路径）。
+- 常见症状：
+  - `MpsGraph backend validation on incompatible OS`
+  - `Espresso compiled without MPSGraph engine`
+  - 模型加载/推理阶段内存暴涨（甚至远超真机表现）
+- 正确策略：
+  - 在 Simulator 里提供“生成按钮”的 UI，但实际走 mock / 预生成 PLY（或直接禁用推理入口）；
+  - 把“本地生成”的验证放到真机（Vision Pro / 高内存 iPhone）或 macOS 环境。
 
 ### 2) 低内存设备的正确策略：**能力探测 + 体验降级 + 兜底路径**
 - 不能让用户点击一次就被系统杀进程（会被认为是严重稳定性问题）。
@@ -92,4 +106,3 @@
 - [ ] 在 Release 下对 iOS/visionOS < 8GB 设备默认禁用本地生成（仅保留导入渲染）。
 - [ ] 在文档中写清“推荐流程”：macOS 生成 → AirDrop / Files 导入 → iOS 渲染。
 - [ ] 若要推进云端：先定输出格式（PLY/SPZ）、接口契约、隐私/数据保留策略，再实现客户端。
-
